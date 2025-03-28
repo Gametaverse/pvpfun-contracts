@@ -56,7 +56,7 @@ contract TokenVault is VerifySign {
 
     function claimReward(VerifySignData memory data) public {
         require(
-            block.number <= data.deadline,
+            block.timestamp <= data.deadline,
             "PVP: The signature has expired"
         );
         require(!usedNonces[data.nonce], "PVP: nonce has been used");

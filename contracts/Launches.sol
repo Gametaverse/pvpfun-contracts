@@ -3,14 +3,13 @@ pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "./VerifySign.sol";
+import "./VerifySign1.sol";
 
 // Uncomment this line to use console.log
 // import "hardhat/console.sol";
 
-contract Launches is VerifySign {
+contract Launches is VerifySign1 {
     using SafeERC20 for IERC20;
 
     mapping(uint256 => CommitmentData) public gameData;
@@ -35,12 +34,20 @@ contract Launches is VerifySign {
         uint64 indexed gameID,
         bytes commitment,
         address indexed player,
-        address token,
+        address indexed token,
         uint256 amount,
         uint64 rate
     );
 
-    constructor(address _authorizer) VerifySign() {
+    event TokenVaultSet(
+        address indexed token,
+        address indexed oldVault,
+        address indexed newVault
+    );
+
+    event TokenVaultRemoved(address indexed token, address indexed oldVault);
+
+    constructor(address _authorizer) VerifySign1() {
         authorizer = _authorizer;
     }
 
@@ -73,12 +80,13 @@ contract Launches is VerifySign {
         uint64 _deadline,
         bytes memory _signature
     ) public {
-        require(block.number <= _deadline, "PVP: The signature has expired");
+        require(block.timestamp <= _deadline, "PVP: The signature has expired");
         require(
             gameData[_gameID].gameID == 0,
             "PVP: orderID has been completed"
         );
         require(tokenVault[_token] != address(0), "PVP: Token not whitelisted");
+        require(_amount > 0, "PVP: Amount must be greater than zero");
 
         CommitmentData memory data = CommitmentData(
             msg.sender,
@@ -106,5 +114,43 @@ contract Launches is VerifySign {
             data.amount,
             data.rate
         );
+    }
+
+    // --- Vault Management Functions (Only Owner) ---
+
+    /**
+     * @dev Sets or updates the vault address for a given token.
+     * Only the contract owner can call this function.
+     * @param _token The address of the ERC20 token.
+     * @param _vault The address where tokens of type `_token` should be sent.
+     */
+    function setTokenVault(address _token, address _vault) public onlyOwner {
+        require(_token != address(0), "PVP: Token address cannot be zero");
+        require(_vault != address(0), "PVP: Vault address cannot be zero");
+
+        address oldVault = tokenVault[_token];
+        tokenVault[_token] = _vault;
+
+        emit TokenVaultSet(_token, oldVault, _vault);
+    }
+
+    /**
+     * @dev Removes the vault address associated with a given token.
+     * After removal, `startGame` will fail for this token until a new vault is set.
+     * Only the contract owner can call this function.
+     * @param _token The address of the ERC20 token whose vault should be removed.
+     */
+    function removeTokenVault(address _token) public onlyOwner {
+        require(_token != address(0), "PVP: Token address cannot be zero");
+
+        address oldVault = tokenVault[_token];
+        require(
+            oldVault != address(0),
+            "PVP: Vault for this token does not exist"
+        );
+
+        delete tokenVault[_token]; // Set the vault address back to zero
+
+        emit TokenVaultRemoved(_token, oldVault);
     }
 }
