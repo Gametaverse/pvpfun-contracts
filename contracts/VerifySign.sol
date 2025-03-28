@@ -3,13 +3,13 @@ pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-contract VerifySign is Ownable {
+abstract contract VerifySign is Ownable {
     //authorizer address
     address public authorizer;
 
     event AuthorizerChanged(address indexed authorizer);
 
-    constructor() public Ownable(msg.sender) {}
+    constructor() Ownable(msg.sender) {}
 
     /// @notice Set authorizer address.
     /// @dev Only owner can execute.
