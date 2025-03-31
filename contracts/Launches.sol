@@ -4,12 +4,12 @@ pragma solidity ^0.8.28;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "./VerifySign1.sol";
+import "./VerifySign.sol";
 
 // Uncomment this line to use console.log
 // import "hardhat/console.sol";
 
-contract Launches is VerifySign1 {
+contract Launches is VerifySign {
     using SafeERC20 for IERC20;
 
     mapping(uint256 => CommitmentData) public gameData;
@@ -47,7 +47,7 @@ contract Launches is VerifySign1 {
 
     event TokenVaultRemoved(address indexed token, address indexed oldVault);
 
-    constructor(address _authorizer) VerifySign1() {
+    constructor(address _authorizer) VerifySign() {
         authorizer = _authorizer;
     }
 
