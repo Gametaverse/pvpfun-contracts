@@ -63,6 +63,7 @@ describe("Launches 合约测试", function () {
         );
 
         const signature = await signer.signMessage(ethers.getBytes(messageHash));
+
         return signature;
     }
 
