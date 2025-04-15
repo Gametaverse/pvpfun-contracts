@@ -21,7 +21,6 @@ contract TokenVault is VerifySign, ReentrancyGuard {
     uint64 public lockPeriod;
     uint256 public constant denominator = 10000;
 
-    uint256 public assets;
     uint256 public shares;
     address public token;
 
@@ -134,12 +133,11 @@ contract TokenVault is VerifySign, ReentrancyGuard {
         address _receiver,
         uint256 _assets
     ) internal returns (uint256 _shares) {
-        if (assets == 0 || shares == 0) {
+        if (shares == 0) {
             _shares = _assets;
         } else {
-            _shares = _assets.rawMul(shares).rawDiv(assets);
+            _shares = _assets.rawMul(shares).rawDiv(assets());
         }
-        assets = assets.rawAdd(_assets);
         shares = shares.rawAdd(_shares);
 
         Banker storage banker = bankers[_receiver];
@@ -172,8 +170,7 @@ contract TokenVault is VerifySign, ReentrancyGuard {
         require(banker.shares > 0, "PVP: No shares to withdraw");
         require(banker.shares >= _shares, "PVP: Insufficient shares");
         banker.shares = banker.shares.rawSub(_shares);
-
-        _assets = _shares.rawMul(assets).rawDiv(shares);
+        _assets = _shares.rawMul(assets()).rawDiv(shares);
 
         if (feeRate != 0) {
             uint256 end_time = banker.blocktime.rawAdd(lockPeriod);
@@ -183,8 +180,11 @@ contract TokenVault is VerifySign, ReentrancyGuard {
             }
         }
 
-        assets = assets.rawSub(_assets);
         shares = shares.rawSub(_shares);
         emit Withdraw(_receiver, _assets, _shares, block.timestamp);
+    }
+
+    function assets() public view returns (uint256) {
+        return IERC20(token).balanceOf(address(this));
     }
 }
