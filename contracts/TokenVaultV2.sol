@@ -7,7 +7,6 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 
-import "solady/src/utils/LibClone.sol";
 import "solady/src/utils/SafeTransferLib.sol";
 import "solady/src/utils/FixedPointMathLib.sol";
 

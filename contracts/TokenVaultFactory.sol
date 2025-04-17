@@ -2,7 +2,6 @@
 pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "solady/src/utils/LibClone.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "./interface/ITokenVault.sol";
 import "./interface/ITokenVaultUpgrader.sol";
