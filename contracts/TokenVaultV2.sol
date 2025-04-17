@@ -3,27 +3,34 @@ pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+
 import "solady/src/utils/LibClone.sol";
 import "solady/src/utils/SafeTransferLib.sol";
 import "solady/src/utils/FixedPointMathLib.sol";
-import "./VerifySignLib.sol";
 
-contract TokenVault is ReentrancyGuard, Ownable {
+import "./VerifySignLib.sol";
+import "./interface/ITokenVaultFactory.sol";
+import "hardhat/console.sol";
+
+contract TokenVaultV2 is
+    Initializable,
+    UUPSUpgradeable,
+    ReentrancyGuardUpgradeable
+{
     using SafeERC20 for IERC20;
     using SafeTransferLib for address;
     using FixedPointMathLib for uint256;
 
     mapping(uint256 => bool) public usedNonces;
 
-    uint256 public feeRate;
-    uint64 public lockPeriod;
+    ITokenVaultFactory public factory;
     uint256 public constant DENOMINATOR = 10000;
-    address public authorizer;
 
     uint256 public totalShares;
-    address public immutable token;
+    address public token;
 
     mapping(address => Banker) public bankers;
 
@@ -34,21 +41,20 @@ contract TokenVault is ReentrancyGuard, Ownable {
         bytes signature;
     }
 
+    // Banker 结构体保持不变
     struct Banker {
         uint256 shares;
         uint256 lastActionTime;
     }
 
+    // 事件保持不变
     event Claimed(
         uint64 indexed nonce,
         address indexed reciver,
         address indexed token,
         uint256 amount
     );
-
     event TransferFunds(address reciver, address token, uint256 amount);
-    event AuthorizerChanged(address indexed authorizer);
-
     event Deposit(
         address indexed depositor,
         address indexed receiver,
@@ -63,21 +69,29 @@ contract TokenVault is ReentrancyGuard, Ownable {
         uint256 sharesBurned,
         uint256 blockTimestamp
     );
+    event Upgraded(address indexed implementation); // UUPS 事件
 
-    constructor(
-        address _initialOwner,
-        address _authorizer,
-        address _token,
-        uint256 _feeRate,
-        uint64 _lockPeriod
-    ) Ownable(_initialOwner) {
-        require(_authorizer != address(0), "PVP: Invalid authorizer");
-        require(_token != address(0), "PVP: Invalid token");
-        require(_feeRate < DENOMINATOR, "PVP: Fee rate too high");
-        authorizer = _authorizer;
-        token = _token;
-        feeRate = _feeRate;
-        lockPeriod = _lockPeriod;
+    function initialize(
+        address _tokenAddr,
+        address _factoryAddr
+    ) public initializer {
+        __ReentrancyGuard_init();
+        __UUPSUpgradeable_init();
+
+        require(_factoryAddr != address(0), "PVP: Invalid authorizer");
+        factory = ITokenVaultFactory(_factoryAddr);
+
+        require(_tokenAddr != address(0), "PVP: Invalid token");
+        token = _tokenAddr;
+    }
+
+    function _authorizeUpgrade(
+        address /* _newImplementation */
+    ) internal override {
+        require(
+            msg.sender == factory.getOwner() || msg.sender == address(factory),
+            "PVP: Only factory can upgrade"
+        );
     }
 
     function _verifySign(
@@ -87,21 +101,22 @@ contract TokenVault is ReentrancyGuard, Ownable {
         bytes32 msgHash = keccak256(
             abi.encodePacked(
                 block.chainid,
-                address(this),
+                address(this), // 验证的是代理合约地址
                 sign.nonce,
                 _expectReciver,
-                token,
+                token, // 使用状态变量 token
                 sign.amount,
                 sign.deadline
             )
         );
         VerifySignLib.requireValidSignature(
-            authorizer,
+            factory.getAuthorizer(),
             msgHash,
             sign.signature
         );
     }
 
+    // nonReentrant modifier 来自 ReentrancyGuardUpgradeable
     function claimReward(VerifySignData memory data) public nonReentrant {
         _claimReward(data);
     }
@@ -130,7 +145,14 @@ contract TokenVault is ReentrancyGuard, Ownable {
         }
     }
 
-    function transferFunds(address _receiver, uint256 amount) public onlyOwner {
+    function transferFunds(
+        address _receiver,
+        uint256 amount
+    ) public nonReentrant {
+        require(
+            msg.sender == factory.getOwner(),
+            "PVP: Only owner can transfer"
+        );
         require(amount > 0, "PVP: Amount must be positive");
         uint256 balance = currentAssets();
         require(balance >= amount, "PVP: Insufficient balance for transfer");
@@ -147,35 +169,26 @@ contract TokenVault is ReentrancyGuard, Ownable {
             _receiver != address(0),
             "PVP: Receiver cannot be zero address"
         );
+        require(factory.depositEnable(), "PVP: Deposit not enabled");
 
-        // --- [审计修复 MEV & 精度 & 除零] ---
-        // 1. 获取操作前的状态
-        uint256 currentTotalShares = totalShares; // 读取当前总份额
-        uint256 currentTotalAssets = currentAssets(); // 读取当前总资产 (在转账前)
+        uint256 currentTotalShares = totalShares;
+        uint256 currentTotalAssets = currentAssets(); // 读取转账前的余额
 
-        // 2. 计算应铸造的份额
         if (currentTotalShares == 0 || currentTotalAssets == 0) {
-            // 如果是首次存款，或者由于某种原因资产为0，则份额等于资产 (1:1)
             sharesMinted = _assets;
         } else {
-            // 基于操作前的总资产和总份额计算新份额，避免被操纵
             sharesMinted = _assets.rawMul(currentTotalShares).rawDiv(
                 currentTotalAssets
             );
         }
-        // 确保计算结果大于0，防止精度损失导致的问题
         require(sharesMinted > 0, "PVP: Shares calculated to zero");
-        // --- 修复结束 ---
 
-        // 3. 执行代币转账 (先完成外部调用)
         IERC20(token).safeTransferFrom(msg.sender, address(this), _assets);
 
-        // 4. 更新合约状态 (在外部调用之后)
-        totalShares = currentTotalShares.rawAdd(sharesMinted); // 更新总份额 (使用计算前的值)
-
+        totalShares = currentTotalShares.rawAdd(sharesMinted);
         Banker storage banker = bankers[_receiver];
         banker.shares = banker.shares.rawAdd(sharesMinted);
-        banker.lastActionTime = block.timestamp; // 更新最后操作时间
+        banker.lastActionTime = uint64(block.timestamp);
 
         emit Deposit(
             msg.sender,
@@ -188,55 +201,72 @@ contract TokenVault is ReentrancyGuard, Ownable {
 
     function withdrawAll(
         address _receiver
-    ) external nonReentrant returns (uint256 _assets) {
-        uint256 _shares = bankers[msg.sender].shares;
-        _assets = _withdraw(msg.sender, _shares);
-        IERC20(token).safeTransfer(_receiver, _assets);
+    ) external nonReentrant returns (uint256 assetsWithdrawn) {
+        require(factory.withdrawEnable(), "PVP: Withdraw not enabled");
+        uint256 sharesToWithdraw = bankers[msg.sender].shares;
+        require(sharesToWithdraw > 0, "PVP: No shares to withdraw");
+        assetsWithdrawn = _withdraw(msg.sender, _receiver, sharesToWithdraw);
     }
 
     function withdraw(
         address _receiver,
         uint256 _shares
-    ) external nonReentrant returns (uint256 _assets) {
-        _assets = _withdraw(msg.sender, _shares);
-        IERC20(token).safeTransfer(_receiver, _assets);
+    ) external nonReentrant returns (uint256 assetsWithdrawn) {
+        require(factory.withdrawEnable(), "PVP: Withdraw not enabled");
+        require(_shares > 0, "PVP: Shares must be positive");
+        assetsWithdrawn = _withdraw(msg.sender, _receiver, _shares);
     }
 
     function _withdraw(
+        address _owner,
         address _receiver,
         uint256 _shares
-    ) internal returns (uint256 _assets) {
-        Banker storage banker = bankers[_receiver];
-        require(banker.shares > 0, "PVP: No shares to withdraw");
+    ) internal returns (uint256 assetsToWithdraw) {
+        Banker storage banker = bankers[_owner];
         require(banker.shares >= _shares, "PVP: Insufficient shares");
-        banker.shares = banker.shares.rawSub(_shares);
-        _assets = _shares.rawMul(currentAssets()).rawDiv(totalShares);
 
+        uint256 currentTotalAssets = currentAssets();
+        assetsToWithdraw = _shares.rawMul(currentTotalAssets).rawDiv(
+            totalShares
+        );
+
+        uint256 feeRate = factory.getFeeRate();
         if (feeRate != 0) {
-            uint256 end_time = banker.lastActionTime.rawAdd(lockPeriod);
-            if (end_time > block.timestamp) {
-                uint256 _fee = _assets.rawMul(feeRate).rawDiv(DENOMINATOR);
-                _assets = _assets.rawSub(_fee);
+            uint64 lockPeriod = factory.getLockPeriod();
+            uint256 endTime = uint256(banker.lastActionTime).rawAdd(lockPeriod); // 显式转换
+            if (endTime > block.timestamp) {
+                uint256 fee = assetsToWithdraw.rawMul(feeRate).rawDiv(
+                    DENOMINATOR
+                );
+                assetsToWithdraw = assetsToWithdraw.rawSub(fee);
             }
         }
+        require(
+            assetsToWithdraw > 0,
+            "PVP: Calculated withdraw amount is zero"
+        );
 
+        banker.shares = banker.shares.rawSub(_shares);
         totalShares = totalShares.rawSub(_shares);
-        emit Withdraw(msg.sender, _receiver, _assets, _shares, block.timestamp);
+
+        IERC20(token).safeTransfer(_receiver, assetsToWithdraw);
+
+        emit Withdraw(
+            _owner,
+            _receiver,
+            assetsToWithdraw,
+            _shares,
+            block.timestamp
+        );
     }
 
     function currentAssets() public view returns (uint256) {
         return IERC20(token).balanceOf(address(this));
     }
 
-    /// @notice Set authorizer address.
-    /// @dev Only owner can execute.
-    /// @param _authorizer Authorizer address.
-    function setAuthorizer(address _authorizer) external onlyOwner {
-        require(
-            _authorizer != authorizer && _authorizer != address(0),
-            "VerifySign: authorizer not changed or authorizer invalid"
-        );
-        authorizer = _authorizer;
-        emit AuthorizerChanged(_authorizer);
+    uint256[40] private __gap;
+
+    function VERSION() external pure returns (uint8) {
+        return 2;
     }
 }

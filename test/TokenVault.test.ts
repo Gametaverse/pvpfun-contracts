@@ -3,12 +3,14 @@ import { expect } from "chai";
 import { ethers, network } from "hardhat";
 import { time } from "@nomicfoundation/hardhat-network-helpers";
 import type { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
-import type { TokenVault, MockERC20 } from "../typechain-types"; // 确认 TypeChain 类型正确导入
+import type { TokenVaultV2, MockERC20, TokenVaultFactory } from "../typechain-types"; // 确认 TypeChain 类型正确导入
 import type { Wallet } from "ethers";
 
 describe("TokenVault 合约测试", function () {
 
-    let tokenVault: TokenVault;
+    let toeknVaultImpl: TokenVaultV2;
+    let tokenVault: TokenVaultV2;
+    let tokenVaultFactory: TokenVaultFactory;
     let mockToken: MockERC20;
     let owner: HardhatEthersSigner | Wallet;
     let authorizer: HardhatEthersSigner | Wallet;
@@ -101,15 +103,42 @@ describe("TokenVault 合约测试", function () {
         const mockTokenAddress = await mockToken.getAddress();
 
         // 3. 部署 TokenVault (由 owner 部署，指定 authorizer)
-        const TokenVaultFactory = await ethers.getContractFactory("TokenVault", owner);
-        tokenVault = await TokenVaultFactory.deploy(authorizer.address, mockToken.getAddress(), feeRate, lockPeriod);
-        await tokenVault.waitForDeployment();
-        const tokenVaultAddress = await tokenVault.getAddress();
+        const TokenVaultFactory = await ethers.getContractFactory("TokenVaultV2", owner);
+        toeknVaultImpl = await TokenVaultFactory.deploy();
+        await toeknVaultImpl.waitForDeployment();
+        const tokenVaultImplAddress = await toeknVaultImpl.getAddress();
+        const FactoryContractFactory = await ethers.getContractFactory("TokenVaultFactory", owner);
+        tokenVaultFactory = (await FactoryContractFactory.deploy(
+            owner.address,
+            tokenVaultImplAddress,
+            authorizer.address,
+            feeRate,
+            lockPeriod
+        )) as TokenVaultFactory;
+        await tokenVaultFactory.waitForDeployment();
+
+        // 创建一个新的Vault示例
+        const tx = await tokenVaultFactory.connect(owner).createVault(mockToken.getAddress());
+        const receipt = await tx.wait();
+        expect(receipt).to.not.be.null;
+        // Use queryFilter to find the event emitted by the factory in that block
+        const filter = tokenVaultFactory.filters.VaultCreated(); // Get the event filter object
+        const events = await tokenVaultFactory.queryFilter(filter, receipt!.blockNumber, receipt!.blockNumber); // Query within the block
+        // Find the event matching our specific transaction hash
+        const event = events.find(e => e.transactionHash === tx.hash);
+        expect(event, `VaultCreated event not found for tx ${tx.hash}`).to.not.be.undefined;
+        const proxyAddress = event?.args?.vaultProxy;
+        expect(proxyAddress).to.not.be.undefined;
+
+        // Attach V1 ABI/Type to the proxy address for interaction
+        tokenVault = TokenVaultFactory.attach(proxyAddress!) as TokenVaultV2;
+        console.log("Vault Proxy 1 created at:", await tokenVault.getAddress());
+
 
         // 4. 为 TokenVault 提供初始代币资金
-        await mockToken.connect(owner).mint(tokenVaultAddress, initialVaultSupply);
+        await mockToken.connect(owner).mint(tokenVault.getAddress(), initialVaultSupply);
 
-        console.log(`已向 TokenVault (${tokenVaultAddress}) 提供 ${ethers.formatUnits(initialVaultSupply, 18)} MC`);
+        console.log(`已向 TokenVault (${proxyAddress}) 提供 ${ethers.formatUnits(initialVaultSupply, 18)} MC`);
 
         console.log("测试环境设置完毕.");
     });
@@ -117,11 +146,11 @@ describe("TokenVault 合约测试", function () {
     // --- 测试套件 ---
     describe("部署与初始化", function () {
         it("应该设置正确的 Owner", async function () {
-            expect(await tokenVault.owner()).to.equal(owner.address);
+            expect(await tokenVaultFactory.owner()).to.equal(owner.address);
         });
 
         it("应该设置正确的 Authorizer", async function () {
-            expect(await tokenVault.authorizer()).to.equal(authorizer.address);
+            expect(await tokenVaultFactory.authorizer()).to.equal(authorizer.address);
         });
 
         it("Vault 应该持有初始的 MC 代币", async function () {
@@ -215,7 +244,7 @@ describe("TokenVault 合约测试", function () {
             const claimData = { nonce, token: mockTokenAddress, amount, deadline, signature: invalidSignature };
 
             await expect(tokenVault.connect(claimer).claimReward(claimData))
-                .to.be.revertedWith("PVP: Invalid signature");
+                .to.be.revertedWith("VerifySignLib: Invalid signature");
         });
 
         it("如果签名无效（签名内容与调用参数不符 - 金额），应该失败", async function () {
@@ -227,7 +256,7 @@ describe("TokenVault 合约测试", function () {
             const claimData = { nonce, token: mockTokenAddress, amount, deadline, signature: invalidSignature };
 
             await expect(tokenVault.connect(claimer).claimReward(claimData))
-                .to.be.revertedWith("PVP: Invalid signature");
+                .to.be.revertedWith("VerifySignLib: Invalid signature");
         });
 
         it("如果签名有效，但调用者 (msg.sender) 与签名中的领取者不符，应该失败", async function () {
@@ -236,7 +265,7 @@ describe("TokenVault 合约测试", function () {
 
             // 但让 otherAccount 去调用 claimReward
             await expect(tokenVault.connect(otherAccount).claimReward(claimData))
-                .to.be.revertedWith("PVP: Invalid signature"); // 因为 _verifySign 包含了 msg.sender 的校验
+                .to.be.revertedWith("VerifySignLib: Invalid signature"); // 因为 _verifySign 包含了 msg.sender 的校验
         });
 
         it("如果 Vault 余额不足以支付奖励，应该失败", async function () {
@@ -325,7 +354,7 @@ describe("TokenVault 合约测试", function () {
             );
 
             await expect(tokenVault.connect(claimer).batchClaimReward(claimDataList))
-                .to.be.revertedWith("PVP: Invalid signature");
+                .to.be.revertedWith("VerifySignLib: Invalid signature");
 
             // 验证第一个有效的 nonce 也未被标记使用（因为交易回滚）
             expect(await tokenVault.usedNonces(claimDataList[0].nonce)).to.be.false;
@@ -384,7 +413,7 @@ describe("TokenVault 合约测试", function () {
             expect(initialVaultBalance).to.be.gte(withdrawAmount);
 
             // Owner 调用提现
-            const tx = await tokenVault.connect(owner).transferFunds(withdrawAmount);
+            const tx = await tokenVault.connect(owner).transferFunds(owner.address, withdrawAmount);
 
             // 检查事件
             await expect(tx)
@@ -398,20 +427,19 @@ describe("TokenVault 合约测试", function () {
 
         it("非 Owner 不应该能提取资金", async function () {
             const withdrawAmount = ethers.parseUnits("100", 18);
-            await expect(tokenVault.connect(otherAccount).transferFunds(withdrawAmount))
-                .to.be.revertedWithCustomError(tokenVault, "OwnableUnauthorizedAccount")
-                .withArgs(otherAccount.address);
+            await expect(tokenVault.connect(otherAccount).transferFunds(otherAccount.address, withdrawAmount))
+                .to.be.revertedWith("PVP: Only owner can transfer");
         });
 
         it("提取金额为 0 应该失败", async function () {
-            await expect(tokenVault.connect(owner).transferFunds(0n))
-                .to.be.revertedWith("PVP: amount must be greater than 0");
+            await expect(tokenVault.connect(owner).transferFunds(owner.address, 0n))
+                .to.be.revertedWith("PVP: Amount must be positive");
         });
 
         it("提取超过 Vault 余额的金额应该失败", async function () {
             const withdrawAmount = initialVaultSupply + 1n; // 比 Vault 总额还多
-            await expect(tokenVault.connect(owner).transferFunds(withdrawAmount))
-                .to.be.revertedWithCustomError(mockToken, "ERC20InsufficientBalance");
+            await expect(tokenVault.connect(owner).transferFunds(owner.address, withdrawAmount))
+                .to.be.revertedWith("PVP: Insufficient balance for transfer");
         });
     });
 
@@ -445,8 +473,8 @@ describe("TokenVault 合约测试", function () {
             await mockToken.connect(claimer).approve(tokenVault.getAddress(), depositAmount);
 
             // 获取调用前的状态（可选，用于验证份额计算）
-            const initialTotalAssets = await tokenVault.assets();
-            const initialTotalShares = await tokenVault.shares();
+            const initialTotalAssets = await tokenVault.currentAssets();
+            const initialTotalShares = await tokenVault.totalShares();
 
             // 计算预期的份额 (根据 _deposit 逻辑)
             let expectedShares: bigint;
@@ -467,6 +495,7 @@ describe("TokenVault 合约测试", function () {
             await expect(tx)
                 .to.emit(tokenVault, "Deposit")
                 .withArgs(
+                    claimer,
                     receiverAddress,    // 验证接收者地址
                     depositAmount,      // 验证存入的资产数量
                     // expectedShares, // 可以验证计算出的份额，如果计算精确的话
@@ -509,8 +538,8 @@ describe("TokenVault 合约测试", function () {
             console.log(`测试设置: user1 (${user1.address}) 初始存入 ${ethers.formatUnits(initialDepositAmount, 18)} RWD`);
             const banker = await tokenVault.bankers(user1.address);
             console.log(`   -> user1 初始份额: ${banker.shares.toString()}`);
-            console.log(`   -> Vault 总资产: ${ethers.formatUnits(await tokenVault.assets(), 18)} RWD`);
-            console.log(`   -> Vault 总份额: ${(await tokenVault.shares()).toString()}`);
+            console.log(`   -> Vault 总资产: ${ethers.formatUnits(await tokenVault.currentAssets(), 18)} RWD`);
+            console.log(`   -> Vault 总份额: ${(await tokenVault.totalShares()).toString()}`);
             console.log("测试环境设置完毕.");
 
         });
@@ -518,8 +547,8 @@ describe("TokenVault 合约测试", function () {
         describe("基本提取 (无费用)", function () {
             it("用户应该能提取其部分份额对应的资产", async function () {
                 const initialBanker = await tokenVault.bankers(user1.address);
-                const initialTotalAssets = await tokenVault.assets();
-                const initialTotalShares = await tokenVault.shares();
+                const initialTotalAssets = await tokenVault.currentAssets();
+                const initialTotalShares = await tokenVault.totalShares();
                 const initialReceiverBalance = await mockToken.balanceOf(receiver.address);
                 const initialVaultBalance = await mockToken.balanceOf(tokenVault.getAddress());
 
@@ -539,13 +568,13 @@ describe("TokenVault 合约测试", function () {
                 // 验证事件
                 await expect(tx)
                     .to.emit(tokenVault, "Withdraw")
-                    .withArgs(user1.address, expectedAssets, sharesToWithdraw, timestamp);
+                    .withArgs(user1.address, receiver.address, expectedAssets, sharesToWithdraw, timestamp);
 
                 // 验证状态变化
                 const finalBanker = await tokenVault.bankers(user1.address);
                 expect(finalBanker.shares).to.equal(initialBanker.shares - sharesToWithdraw);
-                expect(await tokenVault.assets()).to.equal(initialTotalAssets - expectedAssets);
-                expect(await tokenVault.shares()).to.equal(initialTotalShares - sharesToWithdraw);
+                expect(await tokenVault.currentAssets()).to.equal(initialTotalAssets - expectedAssets);
+                expect(await tokenVault.totalShares()).to.equal(initialTotalShares - sharesToWithdraw);
 
                 // 验证余额变化
                 expect(await mockToken.balanceOf(receiver.address)).to.equal(initialReceiverBalance + expectedAssets);
@@ -558,8 +587,8 @@ describe("TokenVault 合约测试", function () {
 
             it("用户应该能使用 withdrawAll 提取其全部份额对应的资产", async function () {
                 const initialBanker = await tokenVault.bankers(user1.address);
-                const initialTotalAssets = await tokenVault.assets();
-                const initialTotalShares = await tokenVault.shares();
+                const initialTotalAssets = await tokenVault.currentAssets();
+                const initialTotalShares = await tokenVault.totalShares();
                 const initialReceiverBalance = await mockToken.balanceOf(receiver.address);
                 const initialVaultBalance = await mockToken.balanceOf(tokenVault.getAddress());
                 const sharesToWithdraw = initialBanker.shares; // 全部份额
@@ -578,13 +607,13 @@ describe("TokenVault 合约测试", function () {
                 // 验证事件
                 await expect(tx)
                     .to.emit(tokenVault, "Withdraw")
-                    .withArgs(user1.address, expectedAssets, sharesToWithdraw, timestamp);
+                    .withArgs(user1.address, receiver.address, expectedAssets, sharesToWithdraw, timestamp);
 
                 // 验证状态变化
                 const finalBanker = await tokenVault.bankers(user1.address);
                 expect(finalBanker.shares).to.equal(0n); // 份额应为 0
-                expect(await tokenVault.assets()).to.equal(initialTotalAssets - expectedAssets);
-                expect(await tokenVault.shares()).to.equal(initialTotalShares - sharesToWithdraw); // 总份额也减少
+                expect(await tokenVault.currentAssets()).to.equal(initialTotalAssets - expectedAssets);
+                expect(await tokenVault.totalShares()).to.equal(initialTotalShares - sharesToWithdraw); // 总份额也减少
 
                 // 验证余额变化
                 expect(await mockToken.balanceOf(receiver.address)).to.equal(initialReceiverBalance + expectedAssets);
@@ -596,8 +625,8 @@ describe("TokenVault 合约测试", function () {
 
             it("在锁定期内提取部分份额应扣除手续费", async function () {
                 const initialBanker = await tokenVault.bankers(user1.address);
-                const initialTotalAssets = await tokenVault.assets();
-                const initialTotalShares = await tokenVault.shares();
+                const initialTotalAssets = await tokenVault.currentAssets();
+                const initialTotalShares = await tokenVault.totalShares();
                 const initialReceiverBalance = await mockToken.balanceOf(receiver.address);
                 const initialVaultBalance = await mockToken.balanceOf(tokenVault.getAddress());
 
@@ -621,13 +650,13 @@ describe("TokenVault 合约测试", function () {
                 // 验证事件，注意 assets 参数是净额
                 await expect(tx)
                     .to.emit(tokenVault, "Withdraw")
-                    .withArgs(user1.address, expectedNetAssets, sharesToWithdraw, timestamp);
+                    .withArgs(user1.address, receiver.address, expectedNetAssets, sharesToWithdraw, timestamp);
 
                 // 验证状态变化，总资产减少净额，份额减少提取的份额
                 const finalBanker = await tokenVault.bankers(user1.address);
                 expect(finalBanker.shares).to.equal(initialBanker.shares - sharesToWithdraw);
-                expect(await tokenVault.assets()).to.equal(initialTotalAssets - expectedNetAssets); // 总资产减少净额
-                expect(await tokenVault.shares()).to.equal(initialTotalShares - sharesToWithdraw); // 总份额减少提取份额
+                expect(await tokenVault.currentAssets()).to.equal(initialTotalAssets - expectedNetAssets); // 总资产减少净额
+                expect(await tokenVault.totalShares()).to.equal(initialTotalShares - sharesToWithdraw); // 总份额减少提取份额
 
                 // 验证余额变化，接收者收到净额
                 expect(await mockToken.balanceOf(receiver.address)).to.equal(initialReceiverBalance + expectedNetAssets);
@@ -636,8 +665,8 @@ describe("TokenVault 合约测试", function () {
 
             it("在锁定期后提取部分份额不应扣除手续费", async function () {
                 const initialBanker = await tokenVault.bankers(user1.address);
-                const initialTotalAssets = await tokenVault.assets();
-                const initialTotalShares = await tokenVault.shares();
+                const initialTotalAssets = await tokenVault.currentAssets();
+                const initialTotalShares = await tokenVault.totalShares();
                 const initialReceiverBalance = await mockToken.balanceOf(receiver.address);
 
                 const sharesToWithdraw = initialBanker.shares / 2n;
@@ -657,7 +686,7 @@ describe("TokenVault 合约测试", function () {
                 // 验证事件，assets 是全额
                 await expect(tx)
                     .to.emit(tokenVault, "Withdraw")
-                    .withArgs(user1.address, expectedAssets, sharesToWithdraw, timestamp);
+                    .withArgs(user1.address, receiver.address, expectedAssets, sharesToWithdraw, timestamp);
 
                 // 验证余额，接收者收到全额
                 expect(await mockToken.balanceOf(receiver.address)).to.equal(initialReceiverBalance + expectedAssets);
@@ -666,8 +695,8 @@ describe("TokenVault 合约测试", function () {
             // 可以为 withdrawAll 添加类似的带费用和不带费用的测试用例
             it("在锁定期内提取全部份额 (withdrawAll) 应扣除手续费", async function () {
                 const initialBanker = await tokenVault.bankers(user1.address);
-                const initialTotalAssets = await tokenVault.assets();
-                const initialTotalShares = await tokenVault.shares();
+                const initialTotalAssets = await tokenVault.currentAssets();
+                const initialTotalShares = await tokenVault.totalShares();
                 const initialReceiverBalance = await mockToken.balanceOf(receiver.address);
                 const sharesToWithdraw = initialBanker.shares;
                 expect(sharesToWithdraw).to.be.gt(0n);
@@ -683,7 +712,7 @@ describe("TokenVault 合约测试", function () {
 
                 await expect(tx)
                     .to.emit(tokenVault, "Withdraw")
-                    .withArgs(user1.address, expectedNetAssets, sharesToWithdraw, timestamp);
+                    .withArgs(user1.address, receiver.address, expectedNetAssets, sharesToWithdraw, timestamp);
 
                 expect(await mockToken.balanceOf(receiver.address)).to.equal(initialReceiverBalance + expectedNetAssets);
                 expect((await tokenVault.bankers(user1.address)).shares).to.equal(0n);
@@ -705,8 +734,8 @@ describe("TokenVault 合约测试", function () {
             it("当用户没有份额时调用 withdrawAll 应该失败", async function () {
                 const initialReceiverBalance = await mockToken.balanceOf(receiver.address);
                 const initialVaultBalance = await mockToken.balanceOf(tokenVault.getAddress());
-                const initialTotalAssets = await tokenVault.assets();
-                const initialTotalShares = await tokenVault.shares();
+                const initialTotalAssets = await tokenVault.currentAssets();
+                const initialTotalShares = await tokenVault.totalShares();
 
                 // user2 没有存款，份额为 0
                 expect((await tokenVault.bankers(user2.address)).shares).to.equal(0n);
@@ -716,41 +745,18 @@ describe("TokenVault 合约测试", function () {
                     .to.be.revertedWith("PVP: No shares to withdraw");
             });
 
-            it("提取 0 份额应该成功但不改变状态", async function () {
-                const initialBanker = await tokenVault.bankers(user1.address);
-                const initialReceiverBalance = await mockToken.balanceOf(receiver.address);
-                const initialVaultBalance = await mockToken.balanceOf(tokenVault.getAddress());
-                const initialTotalAssets = await tokenVault.assets();
-                const initialTotalShares = await tokenVault.shares();
-
-                const tx = await tokenVault.connect(user1).withdraw(receiver.address, 0n); // 提取 0 份额
-                const receipt = await tx.wait();
-                const block = await ethers.provider.getBlock(receipt!.blockNumber);
-                const timestamp = BigInt(block!.timestamp);
-
-                // 应该触发事件，但 assets 和 shares 都为 0
-                await expect(tx)
-                    .to.emit(tokenVault, "Withdraw")
-                    .withArgs(user1.address, 0n, 0n, timestamp);
-
-                // 验证余额和状态无变化
-                expect(await mockToken.balanceOf(receiver.address)).to.equal(initialReceiverBalance);
-                expect(await mockToken.balanceOf(tokenVault.getAddress())).to.equal(initialVaultBalance);
-                expect(await tokenVault.assets()).to.equal(initialTotalAssets);
-                expect(await tokenVault.shares()).to.equal(initialTotalShares);
-                expect((await tokenVault.bankers(user1.address)).shares).to.equal(initialBanker.shares); // 用户份额不变
+            it("提取 0 份额应该失败", async function () {
+                await expect(tokenVault.connect(user1).withdraw(receiver.address, 0n))
+                    .to.revertedWith("PVP: Shares must be positive");
             });
 
             it("提取资产到零地址应该失败", async function () {
                 const initialBanker = await tokenVault.bankers(user1.address);
                 const sharesToWithdraw = initialBanker.shares / 2n;
 
-                // SafeTransferLib 或 ERC20 实现应该阻止向零地址转账
                 await expect(tokenVault.connect(user1).withdraw(ethers.ZeroAddress, sharesToWithdraw))
-                    .to.be.reverted; // 具体错误可能依赖于 SafeTransferLib 或 Token 实现
-                // 可能是 "SafeTransferFailed" (如果 Solady 定义了)
-                // 或 "ERC20: transfer to the zero address" (如果 mockToken revert 了)
-                // 使用 .to.be.reverted 捕获任何 revert
+                    .to.be.reverted;
+
             });
 
         });

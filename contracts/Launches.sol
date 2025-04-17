@@ -4,16 +4,17 @@ pragma solidity ^0.8.28;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "./VerifySign.sol";
+import "./VerifySignLib.sol";
 
 // Uncomment this line to use console.log
 // import "hardhat/console.sol";
 
-contract Launches is VerifySign {
+contract Launches is Ownable {
     using SafeERC20 for IERC20;
 
     mapping(uint256 => CommitmentData) public gameData;
     mapping(address => address) public tokenVault;
+    address public authorizer;
 
     struct CommitmentData {
         address player;
@@ -46,29 +47,32 @@ contract Launches is VerifySign {
     );
 
     event TokenVaultRemoved(address indexed token, address indexed oldVault);
+    event AuthorizerChanged(address indexed authorizer);
 
-    constructor(address _authorizer) VerifySign() {
+    constructor(address _authorizer) Ownable(msg.sender) {
         authorizer = _authorizer;
     }
 
     function _verifySign(VerifySignData memory sign) internal view {
-        address recoveredAddr = recoverAuthorizer(
-            keccak256(
-                abi.encodePacked(
-                    block.chainid,
-                    address(this),
-                    sign.data.player,
-                    sign.data.gameID,
-                    sign.data.commitment,
-                    sign.data.token,
-                    sign.data.amount,
-                    sign.data.rate,
-                    sign.deadline
-                )
-            ),
+        bytes32 msgHash = keccak256(
+            abi.encodePacked(
+                block.chainid,
+                address(this),
+                sign.data.player,
+                sign.data.gameID,
+                sign.data.commitment,
+                sign.data.token,
+                sign.data.amount,
+                sign.data.rate,
+                sign.deadline
+            )
+        );
+
+        VerifySignLib.requireValidSignature(
+            authorizer,
+            msgHash,
             sign.signature
         );
-        require(recoveredAddr == authorizer, "PVP: Invalid signature");
     }
 
     function startGame(
@@ -152,5 +156,17 @@ contract Launches is VerifySign {
         delete tokenVault[_token]; // Set the vault address back to zero
 
         emit TokenVaultRemoved(_token, oldVault);
+    }
+
+    /// @notice Set authorizer address.
+    /// @dev Only owner can execute.
+    /// @param _authorizer Authorizer address.
+    function setAuthorizer(address _authorizer) external onlyOwner {
+        require(
+            _authorizer != authorizer && _authorizer != address(0),
+            "VerifySign: authorizer not changed or authorizer invalid"
+        );
+        authorizer = _authorizer;
+        emit AuthorizerChanged(_authorizer);
     }
 }
