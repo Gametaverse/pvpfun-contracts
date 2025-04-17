@@ -128,6 +128,7 @@ contract TokenVaultV2 is
             block.timestamp <= data.deadline,
             "PVP: The signature has expired"
         );
+        require(data.token == token, "PVP: token not match");
         require(!usedNonces[data.nonce], "PVP: nonce has been used");
         require(data.amount > 0, "PVP: amount must be greater than 0");
 

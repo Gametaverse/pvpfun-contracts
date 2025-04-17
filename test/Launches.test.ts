@@ -510,6 +510,7 @@ describe("Launches 合约测试", function () {
             const tokenVaultAddress = await tokenVault.getAddress();
 
             const claimData = {
+                token: mockTokenAddress,
                 nonce: 10n,
                 amount: parseEther("10"),
                 deadline,
@@ -549,6 +550,7 @@ describe("Launches 合约测试", function () {
             const tokenVaultAddress = await tokenVault.getAddress();
 
             const claimData = {
+                token: mockTokenAddress,
                 nonce: 10n,
                 amount: parseEther("10"),
                 deadline,
@@ -590,6 +592,7 @@ describe("Launches 合约测试", function () {
             const tokenVaultAddress = await tokenVault.getAddress();
 
             const claimData = {
+                token: mockTokenAddress,
                 nonce: 10n,
                 amount: parseEther("10"),
                 deadline,

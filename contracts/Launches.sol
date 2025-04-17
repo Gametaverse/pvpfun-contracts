@@ -151,7 +151,7 @@ contract Launches is Ownable {
             _signature
         );
 
-        ITokenVaultInitializer(tokenVault[_token]).claimReward(
+        ITokenVaultInitializer(tokenVault[data.token]).claimReward(
             data,
             msg.sender
         );

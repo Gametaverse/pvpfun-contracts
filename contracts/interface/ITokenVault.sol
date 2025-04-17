@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 struct VerifySignData {
+    address token;
     uint64 nonce;
     uint256 amount;
     uint64 deadline;
