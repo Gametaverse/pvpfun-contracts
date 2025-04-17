@@ -13,6 +13,8 @@ import "solady/src/utils/FixedPointMathLib.sol";
 
 import "./VerifySignLib.sol";
 import "./interface/ITokenVaultFactory.sol";
+import "./interface/ITokenVault.sol";
+
 // import "hardhat/console.sol";
 
 contract TokenVaultV2 is
@@ -33,13 +35,6 @@ contract TokenVaultV2 is
     address public token;
 
     mapping(address => Banker) public bankers;
-
-    struct VerifySignData {
-        uint64 nonce;
-        uint256 amount;
-        uint64 deadline;
-        bytes signature;
-    }
 
     // Banker 结构体保持不变
     struct Banker {
@@ -101,10 +96,10 @@ contract TokenVaultV2 is
         bytes32 msgHash = keccak256(
             abi.encodePacked(
                 block.chainid,
-                address(this), // 验证的是代理合约地址
+                address(this),
                 sign.nonce,
                 _expectReciver,
-                token, // 使用状态变量 token
+                token,
                 sign.amount,
                 sign.deadline
             )
@@ -117,11 +112,18 @@ contract TokenVaultV2 is
     }
 
     // nonReentrant modifier 来自 ReentrancyGuardUpgradeable
-    function claimReward(VerifySignData memory data) public nonReentrant {
-        _claimReward(data);
+    function claimReward(
+        VerifySignData memory data,
+        address receiver
+    ) public nonReentrant {
+        _claimReward(data, receiver);
     }
 
-    function _claimReward(VerifySignData memory data) internal {
+    function _claimReward(
+        VerifySignData memory data,
+        address receiver
+    ) internal {
+        require(receiver != address(0), "PVP: Invalid receiver");
         require(
             block.timestamp <= data.deadline,
             "PVP: The signature has expired"
@@ -129,19 +131,20 @@ contract TokenVaultV2 is
         require(!usedNonces[data.nonce], "PVP: nonce has been used");
         require(data.amount > 0, "PVP: amount must be greater than 0");
 
-        _verifySign(data, msg.sender);
+        _verifySign(data, receiver);
         usedNonces[data.nonce] = true;
 
-        IERC20(token).safeTransfer(msg.sender, data.amount);
+        IERC20(token).safeTransfer(receiver, data.amount);
 
-        emit Claimed(data.nonce, msg.sender, token, data.amount);
+        emit Claimed(data.nonce, receiver, token, data.amount);
     }
 
     function batchClaimReward(
-        VerifySignData[] memory list
+        VerifySignData[] memory list,
+        address reciver
     ) public nonReentrant {
         for (uint256 i = 0; i < list.length; i++) {
-            _claimReward(list[i]);
+            _claimReward(list[i], reciver);
         }
     }
 

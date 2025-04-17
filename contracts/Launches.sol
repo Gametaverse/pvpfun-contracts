@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./VerifySignLib.sol";
+import {VerifySignData as TokenVaultVerifySignData, ITokenVaultInitializer} from "./interface/ITokenVault.sol";
 
 // Uncomment this line to use console.log
 // import "hardhat/console.sol";
@@ -50,6 +51,10 @@ contract Launches is Ownable {
     event AuthorizerChanged(address indexed authorizer);
 
     constructor(address _authorizer) Ownable(msg.sender) {
+        require(
+            _authorizer != address(0),
+            "Launches: Invalid initial authorizer"
+        );
         authorizer = _authorizer;
     }
 
@@ -84,13 +89,19 @@ contract Launches is Ownable {
         uint64 _deadline,
         bytes memory _signature
     ) public {
-        require(block.timestamp <= _deadline, "PVP: The signature has expired");
+        require(
+            block.timestamp <= _deadline,
+            "Launches: The signature has expired"
+        );
         require(
             gameData[_gameID].gameID == 0,
-            "PVP: orderID has been completed"
+            "Launches: gameID has been completed"
         );
-        require(tokenVault[_token] != address(0), "PVP: Token not whitelisted");
-        require(_amount > 0, "PVP: Amount must be greater than zero");
+        require(
+            tokenVault[_token] != address(0),
+            "Launches: Token not whitelisted"
+        );
+        require(_amount > 0, "Launches: Amount must be greater than zero");
 
         CommitmentData memory data = CommitmentData(
             msg.sender,
@@ -120,6 +131,32 @@ contract Launches is Ownable {
         );
     }
 
+    function startGameAndClaimReward(
+        uint64 _gameID,
+        bytes memory _commitment,
+        address _token,
+        uint256 _amount,
+        uint64 _rate,
+        uint64 _deadline,
+        bytes memory _signature,
+        TokenVaultVerifySignData memory data
+    ) public {
+        startGame(
+            _gameID,
+            _commitment,
+            _token,
+            _amount,
+            _rate,
+            _deadline,
+            _signature
+        );
+
+        ITokenVaultInitializer(tokenVault[_token]).claimReward(
+            data,
+            msg.sender
+        );
+    }
+
     // --- Vault Management Functions (Only Owner) ---
 
     /**
@@ -129,8 +166,8 @@ contract Launches is Ownable {
      * @param _vault The address where tokens of type `_token` should be sent.
      */
     function setTokenVault(address _token, address _vault) public onlyOwner {
-        require(_token != address(0), "PVP: Token address cannot be zero");
-        require(_vault != address(0), "PVP: Vault address cannot be zero");
+        require(_token != address(0), "Launches: Token address cannot be zero");
+        require(_vault != address(0), "Launches: Vault address cannot be zero");
 
         address oldVault = tokenVault[_token];
         tokenVault[_token] = _vault;
@@ -145,12 +182,12 @@ contract Launches is Ownable {
      * @param _token The address of the ERC20 token whose vault should be removed.
      */
     function removeTokenVault(address _token) public onlyOwner {
-        require(_token != address(0), "PVP: Token address cannot be zero");
+        require(_token != address(0), "Launches: Token address cannot be zero");
 
         address oldVault = tokenVault[_token];
         require(
             oldVault != address(0),
-            "PVP: Vault for this token does not exist"
+            "Launches: Vault for this token does not exist"
         );
 
         delete tokenVault[_token]; // Set the vault address back to zero

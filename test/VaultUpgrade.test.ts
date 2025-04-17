@@ -82,20 +82,20 @@ describe("TokenVaultV2 Deployment and Upgrade (TypeScript)", function () {
         mockToken = await MockERC20Factory.deploy("奖励代币", "MC", owner.address);
         await mockToken.waitForDeployment();
         const mockTokenAddress = await mockToken.getAddress();
-        console.log("Mock ERC20 Token deployed to:", mockTokenAddress);
+        // console.log("Mock ERC20 Token deployed to:", mockTokenAddress);
 
         await mockToken.mint(owner.address, parseEther("10000000"));
 
         mockToken2 = await MockERC20Factory.deploy("奖励代币2", "MC2", owner.address);
         await mockToken2.waitForDeployment();
         const mockToken2Address = await mockToken2.getAddress();
-        console.log("Mock ERC20 Token 2 deployed to:", mockToken2Address);
+        // console.log("Mock ERC20 Token 2 deployed to:", mockToken2Address);
         await mockToken2.mint(owner.address, parseEther("10000000"));
 
         // --- 1. Deploy Logic Contract V1 ---
         implementationV1 = await TokenVaultV2Factory.deploy();
         await implementationV1.waitForDeployment();
-        console.log("Implementation V1 deployed to:", await implementationV1.getAddress());
+        // console.log("Implementation V1 deployed to:", await implementationV1.getAddress());
 
         // --- 2. Deploy Factory ---
         const initialFeeRate = 100; // 1%
@@ -108,9 +108,9 @@ describe("TokenVaultV2 Deployment and Upgrade (TypeScript)", function () {
             initialLockPeriod
         )) as TokenVaultFactory;
         await factory.waitForDeployment();
-        console.log("Factory deployed to:", await factory.getAddress());
-        console.log("Factory owner:", await factory.owner());
-        console.log("Factory initial implementation:", await factory.vaultImplementation());
+        // console.log("Factory deployed to:", await factory.getAddress());
+        // console.log("Factory owner:", await factory.owner());
+        // console.log("Factory initial implementation:", await factory.vaultImplementation());
 
         // --- 3. Create Clone Instances via Factory ---
         const tx1 = await factory.connect(owner).createVault(mockToken.getAddress());
@@ -127,7 +127,7 @@ describe("TokenVaultV2 Deployment and Upgrade (TypeScript)", function () {
 
         // Attach V1 ABI/Type to the proxy address for interaction
         vaultProxy1 = TokenVaultV2Factory.attach(proxyAddress1!) as TokenVaultV2;
-        console.log("Vault Proxy 1 created at:", await vaultProxy1.getAddress());
+        // console.log("Vault Proxy 1 created at:", await vaultProxy1.getAddress());
 
         const tx2 = await factory.connect(owner).createVault(mockToken2.getAddress());
         const receipt2 = await tx2.wait();
@@ -140,7 +140,7 @@ describe("TokenVaultV2 Deployment and Upgrade (TypeScript)", function () {
         const proxyAddress2 = event2?.args?.vaultProxy;
         expect(proxyAddress2).to.not.be.undefined;
         vaultProxy2 = TokenVaultV2Factory.attach(proxyAddress2!) as TokenVaultV2;
-        console.log("Vault Proxy 2 created at:", await vaultProxy2.getAddress());
+        // console.log("Vault Proxy 2 created at:", await vaultProxy2.getAddress());
 
         // Verify initialization
         expect(await vaultProxy1.token()).to.equal(await mockToken.getAddress());
@@ -148,7 +148,7 @@ describe("TokenVaultV2 Deployment and Upgrade (TypeScript)", function () {
         expect(await vaultProxy2.token()).to.equal(await mockToken2.getAddress());
         expect(await vaultProxy2.factory()).to.equal(await factory.getAddress());
 
-        console.log("proxy version: ", await vaultProxy1.VERSION());
+        // console.log("proxy version: ", await vaultProxy1.VERSION());
 
         // Verify proxy points to implementation V1
         expect(await getMinimalProxyImplementationFromBytecode(await vaultProxy1.getAddress())).to.equal(await implementationV1.getAddress());
@@ -167,9 +167,9 @@ describe("TokenVaultV2 Deployment and Upgrade (TypeScript)", function () {
         // --- 5. Deploy Logic Contract V2 ---
         implementationV2 = await TokenVaultV3Factory.deploy();
         await implementationV2.waitForDeployment();
-        console.log("Implementation V2 deployed to:", await implementationV2.getAddress());
+        // console.log("Implementation V2 deployed to:", await implementationV2.getAddress());
         const v3Version = await implementationV2.VERSION();
-        console.log("v3 version:", v3Version);
+        // console.log("v3 version:", v3Version);
     });
 
     it("Should allow factory owner to upgrade a single vault via factory", async function () {
@@ -187,13 +187,13 @@ describe("TokenVaultV2 Deployment and Upgrade (TypeScript)", function () {
         //     .to.emit(vaultProxy1, "Upgraded").withArgs(implV2Addr);
 
         const versionBefore = await vaultProxy1.VERSION();
-        console.log("version before: ", versionBefore);
+        // console.log("version before: ", versionBefore);
 
         await expect(factory.connect(owner).batchUpgradeVaults([vaultProxy1.getAddress()], implementationV2.getAddress(), "0x"))
             .to.emit(factory, "VaultsUpgraded"); // Check factory event
 
         const versionAfter = await vaultProxy1.VERSION();
-        console.log("version after: ", versionAfter);
+        // console.log("version after: ", versionAfter);
 
         // It's harder to directly check the proxy's "Upgraded" event here without specific listeners/matchers
 
@@ -254,12 +254,12 @@ describe("TokenVaultV2 Deployment and Upgrade (TypeScript)", function () {
         const mockToken3 = await MockERC20Factory.deploy("奖励代币V3", "MC3", owner.address);
         await mockToken3.waitForDeployment();
         const mockTokenAddress = await mockToken3.getAddress();
-        console.log("Mock ERC20 Token deployed to:", mockTokenAddress);
+        // console.log("Mock ERC20 Token deployed to:", mockTokenAddress);
 
         await mockToken3.mint(owner.address, parseEther("10000000"));
 
         const v1Version = await vaultProxy1.VERSION();
-        console.log("v1 version:", v1Version);
+        // console.log("v1 version:", v1Version);
 
         await expect(factory.connect(owner).setImplementation(await implementationV2.getAddress()))
             .to.emit(factory, "ImplementationUpdated").withArgs(await implementationV2.getAddress());
@@ -281,7 +281,7 @@ describe("TokenVaultV2 Deployment and Upgrade (TypeScript)", function () {
         const vaultProxy3 = TokenVaultV2Factory.attach(proxyAddress3!) as TokenVaultV3; // Attach V1 type initially
 
         const version3 = await vaultProxy3.VERSION();
-        console.log("v3 version:", version3);
+        // console.log("v3 version:", version3);
 
         await mockToken3.connect(owner).approve(vaultProxy3.getAddress(), parseEther("100"));
         await expect(vaultProxy3.connect(owner).deposit(owner.address, parseEther("100")))

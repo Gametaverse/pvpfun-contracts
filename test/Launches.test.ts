@@ -3,8 +3,9 @@ import { expect } from "chai";
 import { ethers, network } from "hardhat";
 import { time } from "@nomicfoundation/hardhat-network-helpers";
 import type { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
-import type { Launches, MockERC20 } from "../typechain-types";
-import type { Wallet } from "ethers";
+import type { Launches, MockERC20, TokenVaultV2 } from "../typechain-types";
+import { parseEther, type Wallet } from "ethers";
+import { generateClaimSignature } from './TokenVault.test';
 
 
 
@@ -70,12 +71,12 @@ describe("Launches 合约测试", function () {
     async function airdrop() {
 
 
-        console.log("为自定义账户提供资金...");
+        // console.log("为自定义账户提供资金...");
         const [funder] = await ethers.getSigners();
         const amountToSend = ethers.parseEther("10.0");
 
 
-        console.log(`正在为自定义账户提供 ${ethers.formatEther(amountToSend)} ETH...`);
+        // console.log(`正在为自定义账户提供 ${ethers.formatEther(amountToSend)} ETH...`);
         const txs = [
             funder.sendTransaction({ to: owner.address, value: amountToSend }),
             funder.sendTransaction({ to: authorizer.address, value: amountToSend }),
@@ -84,7 +85,7 @@ describe("Launches 合约测试", function () {
             funder.sendTransaction({ to: otherAccount.address, value: amountToSend })
         ];
         await Promise.all(txs.map(txPromise => txPromise.then(tx => tx.wait())));
-        console.log("资金提供完成.");
+        // console.log("资金提供完成.");
 
 
     }
@@ -99,8 +100,8 @@ describe("Launches 合约测试", function () {
         vault = new ethers.Wallet(deployerPrivateKey, ethers.provider);
         otherAccount = new ethers.Wallet(otherAccountPrivateKey, ethers.provider);
 
-        console.log("deploy:", owner.address);
-        console.log("authorizer:", authorizer.address);
+        // console.log("deploy:", owner.address);
+        // console.log("authorizer:", authorizer.address);
 
         await airdrop();
 
@@ -200,7 +201,7 @@ describe("Launches 合约测试", function () {
         it("移除不存在的 Vault 应该失败", async function () {
 
             await expect(launches.connect(owner).removeTokenVault(newTokenAddress))
-                .to.be.revertedWith("PVP: Vault for this token does not exist");
+                .to.be.revertedWith("Launches: Vault for this token does not exist");
         });
     });
 
@@ -263,7 +264,7 @@ describe("Launches 合约测试", function () {
                 launches.connect(player).startGame(
                     GAME_ID_1, COMMITMENT_1, mockTokenAddress, AMOUNT_1, RATE_1, deadline, signature
                 )
-            ).to.be.revertedWith("PVP: The signature has expired");
+            ).to.be.revertedWith("Launches: The signature has expired");
         });
 
         it("如果 gameID 已被使用，应该失败", async function () {
@@ -285,7 +286,7 @@ describe("Launches 合约测试", function () {
                     gameID, // 相同的 Game ID
                     COMMITMENT_1, mockTokenAddress, AMOUNT_1, RATE_1, deadline, sig
                 )
-            ).to.be.revertedWith("PVP: orderID has been completed"); // 错误消息可能需要根据合约调整
+            ).to.be.revertedWith("Launches: gameID has been completed"); // 错误消息可能需要根据合约调整
         });
 
         it("如果代币未被添加到白名单（Vault 未设置），应该失败", async function () {
@@ -312,7 +313,7 @@ describe("Launches 合约测试", function () {
                 launches.connect(player).startGame(
                     gameID, COMMITMENT_1, newTokenAddress, AMOUNT_1, RATE_1, deadline, unlistedSig
                 )
-            ).to.be.revertedWith("PVP: Token not whitelisted");
+            ).to.be.revertedWith("Launches: Token not whitelisted");
         });
 
         it("如果签名无效（签名者错误），应该失败", async function () {
@@ -328,7 +329,7 @@ describe("Launches 合约测试", function () {
                 launches.connect(player).startGame(
                     gameID, COMMITMENT_1, mockTokenAddress, AMOUNT_1, RATE_1, deadline, invalidSignature
                 )
-            ).to.be.revertedWith("PVP: Invalid signature"); // 这是来自 _verifySign 的检查
+            ).to.be.revertedWith("VerifySignLib: Invalid signature"); // 这是来自 _verifySign 的检查
         });
 
         it("如果签名数据与输入参数不匹配（例如金额被篡改），应该失败", async function () {
@@ -346,7 +347,7 @@ describe("Launches 合约测试", function () {
                 launches.connect(player).startGame(
                     gameID, COMMITMENT_1, mockTokenAddress, AMOUNT_1, RATE_1, deadline, invalidSignature
                 )
-            ).to.be.revertedWith("PVP: Invalid signature"); // 签名验证会失败
+            ).to.be.revertedWith("VerifySignLib: Invalid signature"); // 签名验证会失败
         });
 
         it("如果玩家的代币授权额度不足，应该失败", async function () {
@@ -362,12 +363,22 @@ describe("Launches 合约测试", function () {
             // 玩家将授权额度降低到低于所需金额
             await mockToken.connect(player).approve(launchesAddress, AMOUNT_1 / 2n);
 
+            // try {
+            //    await launches.connect(player).startGame(
+            //         gameID, COMMITMENT_1, mockTokenAddress, AMOUNT_1, RATE_1, deadline, sig
+            //     )
+            // } catch (error: any) {
+            //     console.error("Caught revert error:", error.message);
+
+            //     expect(error.message).to.include("ERC20InsufficientAllowance");
+            // }
+
             // SafeERC20 的 safeTransferFrom 会检查额度
             await expect(
                 launches.connect(player).startGame(
                     gameID, COMMITMENT_1, mockTokenAddress, AMOUNT_1, RATE_1, deadline, sig
                 )
-            ).to.be.revertedWith("ERC20: insufficient allowance"); // 来自 SafeERC20 的错误
+            ).to.be.revertedWithCustomError(mockToken, "ERC20InsufficientAllowance");
         });
 
         it("如果玩家的代币余额不足，应该失败", async function () {
@@ -382,14 +393,231 @@ describe("Launches 合约测试", function () {
 
             // 将玩家的代币全部转移走，使其余额不足
             const playerBalance = await mockToken.balanceOf(player.address);
+            await mockToken.connect(player).approve(launchesAddress, playerBalance);
             await mockToken.connect(player).transfer(otherAccount.address, playerBalance);
 
-            // SafeERC20 的 safeTransferFrom 会检查余额
             await expect(
                 launches.connect(player).startGame(
                     gameID, COMMITMENT_1, mockTokenAddress, AMOUNT_1, RATE_1, deadline, sig
                 )
-            ).to.be.revertedWith("ERC20: transfer amount exceeds balance"); // 来自 SafeERC20 的错误
+            ).to.be.revertedWithCustomError(mockToken, "ERC20InsufficientBalance"); // 来自 SafeERC20 的错误
+        });
+
+
+
+
+    });
+
+    describe("startGame的同时claimReward", function () {
+
+        let deadline: bigint;
+        let signature: string;
+        let chainId: bigint;
+        let launchesAddress: string;
+        let mockTokenAddress: string;
+        let tokenVault: TokenVaultV2;
+
+        beforeEach(async function () {
+
+            const latestTimestamp = await time.latest();
+            deadline = BigInt(latestTimestamp + 3600);
+            chainId = (await ethers.provider.getNetwork()).chainId;
+            launchesAddress = await launches.getAddress();
+            mockTokenAddress = await mockToken.getAddress();
+
+            // 生成有效的签名
+            signature = await generateSignature(
+                authorizer, chainId, launchesAddress, player.address,
+                GAME_ID_1, COMMITMENT_1, mockTokenAddress, AMOUNT_1, RATE_1, deadline
+            );
+
+
+
+            const TokenVaultFactory = await ethers.getContractFactory("TokenVaultV2", owner);
+            const toeknVaultImpl = await TokenVaultFactory.deploy();
+            await toeknVaultImpl.waitForDeployment();
+            const tokenVaultImplAddress = await toeknVaultImpl.getAddress();
+            const FactoryContractFactory = await ethers.getContractFactory("TokenVaultFactory", owner);
+            const tokenVaultFactory = await FactoryContractFactory.deploy(
+                owner.address,
+                tokenVaultImplAddress,
+                authorizer.address,
+                100,
+                100
+            );
+            await tokenVaultFactory.waitForDeployment();
+
+            // 创建一个新的Vault示例
+            const tx = await tokenVaultFactory.connect(owner).createVault(mockToken.getAddress());
+            const receipt = await tx.wait();
+            expect(receipt).to.not.be.null;
+            // Use queryFilter to find the event emitted by the factory in that block
+            const filter = tokenVaultFactory.filters.VaultCreated(); // Get the event filter object
+            const events = await tokenVaultFactory.queryFilter(filter, receipt!.blockNumber, receipt!.blockNumber); // Query within the block
+            // Find the event matching our specific transaction hash
+            const event = events.find(e => e.transactionHash === tx.hash);
+            expect(event, `VaultCreated event not found for tx ${tx.hash}`).to.not.be.undefined;
+            const proxyAddress = event?.args?.vaultProxy!;
+            expect(proxyAddress).to.not.be.undefined;
+
+            // Attach V1 ABI/Type to the proxy address for interaction
+            tokenVault = TokenVaultFactory.attach(proxyAddress) as TokenVaultV2;
+
+            await mockToken.connect(owner).mint(proxyAddress, parseEther("1000"));
+
+            await launches.connect(owner).setTokenVault(mockTokenAddress, proxyAddress);
+
+            await mockToken.connect(owner).mint(player.address, parseEther("1000"));
+
+            await mockToken.connect(owner).mint(proxyAddress, parseEther("1000"));
+
+        });
+
+        it("如果有claimReward的话调用startGameAndClaimReward", async function () {
+
+            // 部署claim Reward 合约
+
+            // const TokenVaultFactory = await ethers.getContractFactory("TokenVaultV2", owner);
+            // const toeknVaultImpl = await TokenVaultFactory.deploy();
+            // await toeknVaultImpl.waitForDeployment();
+            // const tokenVaultImplAddress = await toeknVaultImpl.getAddress();
+            // const FactoryContractFactory = await ethers.getContractFactory("TokenVaultFactory", owner);
+            // const tokenVaultFactory = await FactoryContractFactory.deploy(
+            //     owner.address,
+            //     tokenVaultImplAddress,
+            //     authorizer.address,
+            //     100,
+            //     100
+            // );
+            // await tokenVaultFactory.waitForDeployment();
+
+            // // 创建一个新的Vault示例
+            // const tx = await tokenVaultFactory.connect(owner).createVault(mockToken.getAddress());
+            // const receipt = await tx.wait();
+            // expect(receipt).to.not.be.null;
+            // // Use queryFilter to find the event emitted by the factory in that block
+            // const filter = tokenVaultFactory.filters.VaultCreated(); // Get the event filter object
+            // const events = await tokenVaultFactory.queryFilter(filter, receipt!.blockNumber, receipt!.blockNumber); // Query within the block
+            // // Find the event matching our specific transaction hash
+            // const event = events.find(e => e.transactionHash === tx.hash);
+            // expect(event, `VaultCreated event not found for tx ${tx.hash}`).to.not.be.undefined;
+            // const proxyAddress = event?.args?.vaultProxy!;
+            // expect(proxyAddress).to.not.be.undefined;
+
+            // // Attach V1 ABI/Type to the proxy address for interaction
+            // const tokenVault = TokenVaultFactory.attach(proxyAddress) as TokenVaultV2;
+
+            const tokenVaultAddress = await tokenVault.getAddress();
+
+            const claimData = {
+                nonce: 10n,
+                amount: parseEther("10"),
+                deadline,
+                signature: ""
+            };
+
+            claimData.signature = await generateClaimSignature(authorizer, chainId, tokenVaultAddress, claimData.nonce
+                , player.address, await mockToken.getAddress(), claimData.amount, claimData.deadline);
+
+            const gameID = 5n;
+
+            const sig = await generateSignature(
+                authorizer,
+                chainId, launchesAddress, player.address,
+                gameID, COMMITMENT_1, mockTokenAddress, AMOUNT_1, RATE_1, deadline
+            );
+
+            const startGameTx = await launches.connect(player).startGameAndClaimReward(gameID, COMMITMENT_1, mockTokenAddress, AMOUNT_1, RATE_1, deadline, sig
+                , claimData
+            )
+
+            await expect(startGameTx).to.emit(launches, "GameStarted")
+                .withArgs(gameID, COMMITMENT_1, player.address, mockTokenAddress, AMOUNT_1, RATE_1);
+
+            await expect(startGameTx).to.emit(tokenVault, "Claimed")
+                .withArgs(claimData.nonce, player, mockTokenAddress, claimData.amount);
+
+
+
+
+
+        });
+
+        it("在startGameAndClaimReward过程中，startGame失败后，claimReward也会失败", async function () {
+
+
+            const tokenVaultAddress = await tokenVault.getAddress();
+
+            const claimData = {
+                nonce: 10n,
+                amount: parseEther("10"),
+                deadline,
+                signature: ""
+            };
+
+            claimData.signature = await generateClaimSignature(authorizer, chainId, tokenVaultAddress, claimData.nonce
+                , player.address, await mockToken.getAddress(), claimData.amount, claimData.deadline);
+
+            const gameID = 5n;
+
+            const sig = await generateSignature(
+                authorizer,
+                chainId, launchesAddress, player.address,
+                gameID, COMMITMENT_1, mockTokenAddress, AMOUNT_1, RATE_1, deadline
+            );
+
+            // 设置一个错误的gameID，导致gameStart的签名校验失败
+            await expect(launches.connect(player).startGameAndClaimReward(6n, COMMITMENT_1, mockTokenAddress, AMOUNT_1, RATE_1, deadline, sig
+                , claimData
+            )).to.reverted;
+
+            // 查询nonce是否使用
+            const nonceHasUsed = await tokenVault.usedNonces(claimData.nonce);
+
+            expect(nonceHasUsed).to.equal(false);
+
+            // await expect(startGameTx).to.emit(launches, "GameStarted")
+            //     .withArgs(gameID, COMMITMENT_1, player.address, mockTokenAddress, AMOUNT_1, RATE_1);
+
+            // await expect(startGameTx).to.emit(tokenVault, "Claimed")
+            //     .withArgs(claimData.nonce, player, mockTokenAddress, claimData.amount);
+
+        });
+
+        it("在startGameAndClaimReward过程中，claimReward失败后，startGame要回滚", async function () {
+
+
+            const tokenVaultAddress = await tokenVault.getAddress();
+
+            const claimData = {
+                nonce: 10n,
+                amount: parseEther("10"),
+                deadline,
+                signature: ""
+            };
+
+            claimData.signature = await generateClaimSignature(authorizer, chainId, tokenVaultAddress, claimData.nonce
+                , player.address, await mockToken.getAddress(), claimData.amount, claimData.deadline);
+
+            const gameID = 50n;
+
+            const sig = await generateSignature(
+                authorizer,
+                chainId, launchesAddress, player.address,
+                gameID, COMMITMENT_1, mockTokenAddress, AMOUNT_1, RATE_1, deadline
+            );
+
+            // 修改claimReward数据，导致claimReward的签名校验失败
+            claimData.amount = parseEther("2000");
+            await expect(launches.connect(player).startGameAndClaimReward(gameID, COMMITMENT_1, mockTokenAddress, AMOUNT_1, RATE_1, deadline, sig
+                , claimData
+            )).to.reverted;
+
+            // 查询gameID是否使用
+            const gameData = await launches.gameData(gameID);
+            expect(gameData.gameID).to.equal(0);
+
+
         });
 
     });

@@ -6,6 +6,28 @@ import type { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signer
 import type { TokenVaultV2, MockERC20, TokenVaultFactory } from "../typechain-types"; // 确认 TypeChain 类型正确导入
 import type { Wallet } from "ethers";
 
+export async function generateClaimSignature(
+    signer: HardhatEthersSigner | Wallet,
+    chainId: bigint,
+    contractAddress: string,
+    nonce: bigint,
+    claimerAddress: string,
+    tokenAddress: string,
+    amount: bigint,
+    deadline: bigint
+): Promise<string> {
+    const messageHash = ethers.keccak256(
+        ethers.solidityPacked(
+
+            ["uint256", "address", "uint64", "address", "address", "uint256", "uint64"],
+            [chainId, contractAddress, nonce, claimerAddress, tokenAddress, amount, deadline]
+        )
+    );
+
+    const signature = await signer.signMessage(ethers.getBytes(messageHash));
+    return signature;
+}
+
 describe("TokenVault 合约测试", function () {
 
     let toeknVaultImpl: TokenVaultV2;
@@ -27,27 +49,27 @@ describe("TokenVault 合约测试", function () {
     const lockPeriod = 3;
 
 
-    async function generateClaimSignature(
-        signer: HardhatEthersSigner | Wallet,
-        chainId: bigint,
-        contractAddress: string,
-        nonce: bigint,
-        claimerAddress: string,
-        tokenAddress: string,
-        amount: bigint,
-        deadline: bigint
-    ): Promise<string> {
-        const messageHash = ethers.keccak256(
-            ethers.solidityPacked(
+    // async function generateClaimSignature(
+    //     signer: HardhatEthersSigner | Wallet,
+    //     chainId: bigint,
+    //     contractAddress: string,
+    //     nonce: bigint,
+    //     claimerAddress: string,
+    //     tokenAddress: string,
+    //     amount: bigint,
+    //     deadline: bigint
+    // ): Promise<string> {
+    //     const messageHash = ethers.keccak256(
+    //         ethers.solidityPacked(
 
-                ["uint256", "address", "uint64", "address", "address", "uint256", "uint64"],
-                [chainId, contractAddress, nonce, claimerAddress, tokenAddress, amount, deadline]
-            )
-        );
+    //             ["uint256", "address", "uint64", "address", "address", "uint256", "uint64"],
+    //             [chainId, contractAddress, nonce, claimerAddress, tokenAddress, amount, deadline]
+    //         )
+    //     );
 
-        const signature = await signer.signMessage(ethers.getBytes(messageHash));
-        return signature;
-    }
+    //     const signature = await signer.signMessage(ethers.getBytes(messageHash));
+    //     return signature;
+    // }
 
     function calculateExpectedAssets(
         userSharesToWithdraw: bigint,
@@ -82,17 +104,17 @@ describe("TokenVault 合约测试", function () {
 
             // 为 Wallet 提供资金
             const amountToSend = ethers.parseEther("5.0");
-            console.log("为自定义 Wallet 提供 ETH...");
+            // console.log("为自定义 Wallet 提供 ETH...");
             const txs = [
                 funder.sendTransaction({ to: owner.address, value: amountToSend }),
                 funder.sendTransaction({ to: authorizer.address, value: amountToSend }),
                 funder.sendTransaction({ to: claimer.address, value: amountToSend }),
             ];
             await Promise.all(txs.map(txP => txP.then(tx => tx.wait())));
-            console.log("资金提供完成.");
+            // console.log("资金提供完成.");
 
         } else {
-            console.log("使用 Hardhat 默认账户进行测试...");
+            // console.log("使用 Hardhat 默认账户进行测试...");
             [owner, authorizer, claimer, otherAccount, user1, user2, receiver] = signers; // 使用前几个默认账户
         }
 
@@ -132,15 +154,15 @@ describe("TokenVault 合约测试", function () {
 
         // Attach V1 ABI/Type to the proxy address for interaction
         tokenVault = TokenVaultFactory.attach(proxyAddress!) as TokenVaultV2;
-        console.log("Vault Proxy 1 created at:", await tokenVault.getAddress());
+        // console.log("Vault Proxy 1 created at:", await tokenVault.getAddress());
 
 
         // 4. 为 TokenVault 提供初始代币资金
         await mockToken.connect(owner).mint(tokenVault.getAddress(), initialVaultSupply);
 
-        console.log(`已向 TokenVault (${proxyAddress}) 提供 ${ethers.formatUnits(initialVaultSupply, 18)} MC`);
+        // console.log(`已向 TokenVault (${proxyAddress}) 提供 ${ethers.formatUnits(initialVaultSupply, 18)} MC`);
 
-        console.log("测试环境设置完毕.");
+        // console.log("测试环境设置完毕.");
     });
 
     // --- 测试套件 ---
@@ -192,7 +214,7 @@ describe("TokenVault 合约测试", function () {
             const claimData = { nonce, token: mockTokenAddress, amount, deadline, signature: validSignature };
 
             // Claimer 连接并调用 claimReward
-            const tx = await tokenVault.connect(claimer).claimReward(claimData);
+            const tx = await tokenVault.connect(claimer).claimReward(claimData, claimer);
 
             // 检查事件
             await expect(tx)
@@ -211,17 +233,17 @@ describe("TokenVault 合约测试", function () {
             await time.increaseTo(deadline + 1n); // 快进到过期后
             const claimData = { nonce, token: mockTokenAddress, amount, deadline, signature: validSignature };
 
-            await expect(tokenVault.connect(claimer).claimReward(claimData))
+            await expect(tokenVault.connect(claimer).claimReward(claimData, claimer))
                 .to.be.revertedWith("PVP: The signature has expired");
         });
 
         it("如果 Nonce 已被使用，应该失败", async function () {
             const claimData = { nonce, token: mockTokenAddress, amount, deadline, signature: validSignature };
             // 第一次成功领取
-            await tokenVault.connect(claimer).claimReward(claimData);
+            await tokenVault.connect(claimer).claimReward(claimData, claimer);
 
             // 第二次尝试使用相同 Nonce
-            await expect(tokenVault.connect(claimer).claimReward(claimData))
+            await expect(tokenVault.connect(claimer).claimReward(claimData, claimer))
                 .to.be.revertedWith("PVP: nonce has been used");
         });
 
@@ -232,7 +254,7 @@ describe("TokenVault 合约测试", function () {
             );
             const claimData = { nonce, token: mockTokenAddress, amount: zeroAmount, deadline, signature: signatureForZero };
 
-            await expect(tokenVault.connect(claimer).claimReward(claimData))
+            await expect(tokenVault.connect(claimer).claimReward(claimData, claimer))
                 .to.be.revertedWith("PVP: amount must be greater than 0");
         });
 
@@ -243,7 +265,7 @@ describe("TokenVault 合约测试", function () {
             );
             const claimData = { nonce, token: mockTokenAddress, amount, deadline, signature: invalidSignature };
 
-            await expect(tokenVault.connect(claimer).claimReward(claimData))
+            await expect(tokenVault.connect(claimer).claimReward(claimData, claimer))
                 .to.be.revertedWith("VerifySignLib: Invalid signature");
         });
 
@@ -255,7 +277,7 @@ describe("TokenVault 合约测试", function () {
             // 调用时使用原始 amount，但签名是基于 signedAmount
             const claimData = { nonce, token: mockTokenAddress, amount, deadline, signature: invalidSignature };
 
-            await expect(tokenVault.connect(claimer).claimReward(claimData))
+            await expect(tokenVault.connect(claimer).claimReward(claimData, claimer))
                 .to.be.revertedWith("VerifySignLib: Invalid signature");
         });
 
@@ -264,7 +286,7 @@ describe("TokenVault 合约测试", function () {
             const claimData = { nonce, token: mockTokenAddress, amount, deadline, signature: validSignature };
 
             // 但让 otherAccount 去调用 claimReward
-            await expect(tokenVault.connect(otherAccount).claimReward(claimData))
+            await expect(tokenVault.connect(otherAccount).claimReward(claimData, otherAccount))
                 .to.be.revertedWith("VerifySignLib: Invalid signature"); // 因为 _verifySign 包含了 msg.sender 的校验
         });
 
@@ -276,7 +298,7 @@ describe("TokenVault 合约测试", function () {
             const claimData = { nonce, token: mockTokenAddress, amount: largeAmount, deadline, signature: signatureLarge };
 
             // SafeTransfer 会失败
-            await expect(tokenVault.connect(claimer).claimReward(claimData))
+            await expect(tokenVault.connect(claimer).claimReward(claimData, claimer))
                 .to.be.revertedWithCustomError(mockToken, "ERC20InsufficientBalance"); // 来自 SafeERC20
         });
     });
@@ -315,7 +337,7 @@ describe("TokenVault 合约测试", function () {
             const totalAmount = claimDataList.reduce((sum, data) => sum + data.amount, 0n);
 
             // 执行批量领取
-            const tx = await tokenVault.connect(claimer).batchClaimReward(claimDataList);
+            const tx = await tokenVault.connect(claimer).batchClaimReward(claimDataList, claimer);
 
             // 检查每个 Nonce 都被使用
             for (const data of claimDataList) {
@@ -330,14 +352,14 @@ describe("TokenVault 合约测试", function () {
 
         it("如果列表中有一个 Nonce 已被使用，整个批量交易应该回滚", async function () {
             // 先手动领取第一个奖励
-            await tokenVault.connect(claimer).claimReward(claimDataList[0]);
+            await tokenVault.connect(claimer).claimReward(claimDataList[0], claimer);
             expect(await tokenVault.usedNonces(claimDataList[0].nonce)).to.be.true;
 
             const initialClaimerBalance = await mockToken.balanceOf(claimerAddress);
             const initialVaultBalance = await mockToken.balanceOf(tokenVaultAddress);
 
             // 尝试批量领取包含已使用 Nonce 的列表
-            await expect(tokenVault.connect(claimer).batchClaimReward(claimDataList))
+            await expect(tokenVault.connect(claimer).batchClaimReward(claimDataList, claimer))
                 .to.be.revertedWith("PVP: nonce has been used");
 
             // 验证状态没有改变（交易回滚了）
@@ -353,7 +375,7 @@ describe("TokenVault 合约测试", function () {
                 chainId, tokenVaultAddress, claimDataList[1].nonce, claimerAddress, mockTokenAddress, claimDataList[1].amount, claimDataList[1].deadline
             );
 
-            await expect(tokenVault.connect(claimer).batchClaimReward(claimDataList))
+            await expect(tokenVault.connect(claimer).batchClaimReward(claimDataList, claimer))
                 .to.be.revertedWith("VerifySignLib: Invalid signature");
 
             // 验证第一个有效的 nonce 也未被标记使用（因为交易回滚）
@@ -374,7 +396,7 @@ describe("TokenVault 合约测试", function () {
                 largeClaimList.push({ nonce, token: mockTokenAddress, amount: largeAmount, deadline, signature });
             }
 
-            await expect(tokenVault.connect(claimer).batchClaimReward(largeClaimList))
+            await expect(tokenVault.connect(claimer).batchClaimReward(largeClaimList, claimer))
                 .to.be.revertedWithCustomError(mockToken, "ERC20InsufficientBalance"); // 预计在第二次领取时失败
             // try {
             //     await tokenVault.connect(claimer).batchClaimReward(largeClaimList);
@@ -535,12 +557,12 @@ describe("TokenVault 合约测试", function () {
             await mockToken.connect(user1).approve(tokenVault.getAddress(), initialDepositAmount);
             await tokenVault.connect(user1).deposit(user1.address, initialDepositAmount); // user1 存款给自己
 
-            console.log(`测试设置: user1 (${user1.address}) 初始存入 ${ethers.formatUnits(initialDepositAmount, 18)} RWD`);
-            const banker = await tokenVault.bankers(user1.address);
-            console.log(`   -> user1 初始份额: ${banker.shares.toString()}`);
-            console.log(`   -> Vault 总资产: ${ethers.formatUnits(await tokenVault.currentAssets(), 18)} RWD`);
-            console.log(`   -> Vault 总份额: ${(await tokenVault.totalShares()).toString()}`);
-            console.log("测试环境设置完毕.");
+            // console.log(`测试设置: user1 (${user1.address}) 初始存入 ${ethers.formatUnits(initialDepositAmount, 18)} RWD`);
+            // const banker = await tokenVault.bankers(user1.address);
+            // console.log(`   -> user1 初始份额: ${banker.shares.toString()}`);
+            // console.log(`   -> Vault 总资产: ${ethers.formatUnits(await tokenVault.currentAssets(), 18)} RWD`);
+            // console.log(`   -> Vault 总份额: ${(await tokenVault.totalShares()).toString()}`);
+            // console.log("测试环境设置完毕.");
 
         });
 
@@ -723,8 +745,8 @@ describe("TokenVault 合约测试", function () {
                 const initialBanker = await tokenVault.bankers(user1.address);
                 const sharesToWithdraw = initialBanker.shares + 1n; // 比持有份额多 1
 
-                console.log("Banker shares:", initialBanker.shares.toString());
-                console.log("Shares to withdraw:", sharesToWithdraw.toString());
+                // console.log("Banker shares:", initialBanker.shares.toString());
+                // console.log("Shares to withdraw:", sharesToWithdraw.toString());
                 expect(sharesToWithdraw).to.be.gt(initialBanker.shares); // 确认确实大于
 
                 await expect(tokenVault.connect(user1).withdraw(receiver.address, sharesToWithdraw))
