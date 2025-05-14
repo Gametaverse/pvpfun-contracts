@@ -242,6 +242,7 @@ contract TokenVaultV2 is
                     DENOMINATOR
                 );
                 assetsToWithdraw = assetsToWithdraw.rawSub(fee);
+                IERC20(token).safeTransfer(factory.getOwner(), fee);
             }
         }
         require(

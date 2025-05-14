@@ -13,6 +13,8 @@ import {VerifySignData as TokenVaultVerifySignData, ITokenVaultInitializer} from
 contract Launches is Ownable {
     using SafeERC20 for IERC20;
 
+    uint256 public feeRate;
+    uint256 public constant DENOMINATOR = 10000;
     mapping(uint256 => CommitmentData) public gameData;
     mapping(address => address) public tokenVault;
     address public authorizer;
@@ -49,6 +51,7 @@ contract Launches is Ownable {
 
     event TokenVaultRemoved(address indexed token, address indexed oldVault);
     event AuthorizerChanged(address indexed authorizer);
+    event FeeRateUpdated(uint256 newFeeRate);
 
     constructor(address _authorizer) Ownable(msg.sender) {
         require(
@@ -113,12 +116,19 @@ contract Launches is Ownable {
         );
 
         _verifySign(VerifySignData(data, _deadline, _signature));
+
+        if (feeRate > 0) {
+            uint256 fee = (data.amount * feeRate) / DENOMINATOR;
+            data.amount -= fee;
+            IERC20(_token).safeTransferFrom(msg.sender, address(this), fee);
+        }
+
         gameData[_gameID] = data;
 
         IERC20(_token).safeTransferFrom(
             msg.sender,
             tokenVault[_token],
-            _amount
+            data.amount
         );
 
         emit GameStarted(
@@ -201,9 +211,31 @@ contract Launches is Ownable {
     function setAuthorizer(address _authorizer) external onlyOwner {
         require(
             _authorizer != authorizer && _authorizer != address(0),
-            "VerifySign: authorizer not changed or authorizer invalid"
+            "Launches: authorizer not changed or authorizer invalid"
         );
         authorizer = _authorizer;
         emit AuthorizerChanged(_authorizer);
+    }
+
+    function updateFeeRate(uint256 _feeRate) external onlyOwner {
+        require(
+            _feeRate <= DENOMINATOR,
+            "Launches: Fee rate must be less than 100%"
+        );
+        feeRate = _feeRate;
+        emit FeeRateUpdated(_feeRate);
+    }
+
+    function withdrawFeeTo(address token, address receiver) external onlyOwner {
+        require(token != address(0), "Launches: Token address cannot be zero");
+        require(
+            receiver != address(0),
+            "Launches: Receiver address cannot be zero"
+        );
+
+        uint256 balance = IERC20(token).balanceOf(address(this));
+        require(balance > 0, "Launches: No balance to withdraw");
+
+        IERC20(token).safeTransfer(receiver, balance);
     }
 }
