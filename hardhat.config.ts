@@ -1,5 +1,16 @@
+import "dotenv/config";
 import { HardhatUserConfig } from "hardhat/config";
 import "@nomicfoundation/hardhat-toolbox";
+
+// --- 获取环境变量中的私钥 ---
+const deployerPrivateKey = process.env.PRIVATE_KEY_DEPLOYER;
+const authorizerPrivateKey = process.env.PRIVATE_KEY_AUTHORIZER;
+
+if (!deployerPrivateKey || !authorizerPrivateKey) {
+  throw new Error(
+    "Please set PRIVATE_KEY_DEPLOYER, and PRIVATE_KEY_AUTHORIZER in your .env file"
+  );
+}
 
 const config: HardhatUserConfig = {
   solidity: {
@@ -18,6 +29,12 @@ const config: HardhatUserConfig = {
       // 可以配置初始账户和余额等
       // accounts: [...]
     },
+    bscTestnet: {
+      url: "https://bsc-testnet-rpc.publicnode.com", // 使用环境变量中的 RPC URL
+      chainId: 97, // BSC 测试网的 Chain ID
+      accounts: [deployerPrivateKey, authorizerPrivateKey], // 使用你的钱包私钥
+      gasPrice: "auto",
+    },
     // 如果需要，可以添加其他网络配置，例如 Rinkeby, Mainnet 等
     // localhost: {
     //   url: "http://127.0.0.1:8545",
@@ -26,17 +43,17 @@ const config: HardhatUserConfig = {
   },
   paths: {
     sources: "./contracts", // Solidity 源文件目录
-    tests: "./test",         // 测试文件目录
-    cache: "./cache",       // Hardhat 缓存目录
+    tests: "./test", // 测试文件目录
+    cache: "./cache", // Hardhat 缓存目录
     artifacts: "./artifacts", // 编译产物目录
   },
   typechain: {
     outDir: "typechain-types", // TypeScript 类型定义输出目录
-    target: "ethers-v6",      // 指定生成的类型适配 ethers v6
+    target: "ethers-v6", // 指定生成的类型适配 ethers v6
   },
   mocha: {
-    timeout: 40000 // 增加测试超时时间（如果需要）
-  }
+    timeout: 40000, // 增加测试超时时间（如果需要）
+  },
 };
 
 export default config;
