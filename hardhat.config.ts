@@ -6,7 +6,15 @@ import "@nomicfoundation/hardhat-toolbox";
 const deployerPrivateKey = process.env.PRIVATE_KEY_DEPLOYER;
 const authorizerPrivateKey = process.env.PRIVATE_KEY_AUTHORIZER;
 
-if (!deployerPrivateKey || !authorizerPrivateKey) {
+const mainnetDeployerPrivateKey = process.env.Mainnet_PRIVATE_KEY_DEPLOYER;
+const mainnetAuthorizerPrivateKey = process.env.Mainnet_PRIVATE_KEY_AUTHORIZER;
+
+if (
+  !deployerPrivateKey ||
+  !authorizerPrivateKey ||
+  !mainnetDeployerPrivateKey ||
+  !mainnetAuthorizerPrivateKey
+) {
   throw new Error(
     "Please set PRIVATE_KEY_DEPLOYER, and PRIVATE_KEY_AUTHORIZER in your .env file"
   );
@@ -33,6 +41,12 @@ const config: HardhatUserConfig = {
       url: "https://bsc-testnet-rpc.publicnode.com", // 使用环境变量中的 RPC URL
       chainId: 97, // BSC 测试网的 Chain ID
       accounts: [deployerPrivateKey, authorizerPrivateKey], // 使用你的钱包私钥
+      gasPrice: "auto",
+    },
+    bscMainnet: {
+      url: "https://bsc-mainnet.infura.io/v3/a50633c728514162aecbd9f1235300f7", // 使用环境变量中的 RPC URL
+      chainId: 56, // BSC 测试网的 Chain ID
+      accounts: [mainnetDeployerPrivateKey, mainnetAuthorizerPrivateKey], // 使用你的钱包私钥
       gasPrice: "auto",
     },
     // 如果需要，可以添加其他网络配置，例如 Rinkeby, Mainnet 等
