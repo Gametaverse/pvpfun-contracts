@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 
 import "solady/src/utils/SafeTransferLib.sol";
 import "solady/src/utils/FixedPointMathLib.sol";
@@ -19,7 +20,8 @@ import "./interface/ITokenVault.sol";
 contract TokenVaultV2 is
     Initializable,
     UUPSUpgradeable,
-    ReentrancyGuardUpgradeable
+    ReentrancyGuardUpgradeable,
+    ERC20Upgradeable
 {
     using SafeERC20 for IERC20;
     using SafeTransferLib for address;
@@ -30,18 +32,18 @@ contract TokenVaultV2 is
     ITokenVaultFactory public factory;
     uint256 public constant DENOMINATOR = 10000;
 
-    uint256 public totalShares;
     address public token;
 
-    mapping(address => Banker) public bankers;
+    uint256 public withdrawalIndex = 1;
+    mapping(uint256 => WithdrawalRequest) public withdrawalRequests;
+    mapping(address => uint256[]) public userPendingRequestIds;
 
-    // Banker 结构体保持不变
-    struct Banker {
-        uint256 shares;
-        uint256 lastActionTime;
+    struct WithdrawalRequest {
+        address user;
+        uint256 lpAmount;
+        uint256 requestTime;
     }
 
-    // 事件保持不变
     event Claimed(
         uint64 indexed nonce,
         address indexed reciver,
@@ -56,14 +58,21 @@ contract TokenVaultV2 is
         uint256 sharesMinted,
         uint256 blockTimestamp
     );
-    event Withdraw(
-        address indexed owner,
-        address indexed receiver,
-        uint256 assetsWithdrawn,
-        uint256 sharesBurned,
-        uint256 blockTimestamp
+
+    event WithdrawalRequested(
+        address indexed user,
+        uint256 indexed requestId,
+        uint256 lpAmount,
+        uint256 requestTime
     );
-    event Upgraded(address indexed implementation); // UUPS 事件
+    event WithdrawalFinalized(
+        address indexed user,
+        uint256 indexed requestId,
+        uint256 assetsReceived,
+        uint256 fee
+    );
+
+    event Upgraded(address indexed implementation);
 
     function initialize(
         address _tokenAddr,
@@ -71,6 +80,8 @@ contract TokenVaultV2 is
     ) public initializer {
         __ReentrancyGuard_init();
         __UUPSUpgradeable_init();
+
+        __ERC20_init("PVPFUN LP Token", "PVPFUN-LP");
 
         require(_factoryAddr != address(0), "PVP: Invalid authorizer");
         factory = ITokenVaultFactory(_factoryAddr);
@@ -110,7 +121,6 @@ contract TokenVaultV2 is
         );
     }
 
-    // nonReentrant modifier 来自 ReentrancyGuardUpgradeable
     function claimReward(
         VerifySignData memory data,
         address receiver
@@ -174,8 +184,8 @@ contract TokenVaultV2 is
         );
         require(factory.depositEnable(), "PVP: Deposit not enabled");
 
-        uint256 currentTotalShares = totalShares;
-        uint256 currentTotalAssets = currentAssets(); // 读取转账前的余额
+        uint256 currentTotalShares = totalSupply();
+        uint256 currentTotalAssets = currentAssets();
 
         if (currentTotalShares == 0 || currentTotalAssets == 0) {
             sharesMinted = _assets;
@@ -188,10 +198,7 @@ contract TokenVaultV2 is
 
         IERC20(token).safeTransferFrom(msg.sender, address(this), _assets);
 
-        totalShares = currentTotalShares.rawAdd(sharesMinted);
-        Banker storage banker = bankers[_receiver];
-        banker.shares = banker.shares.rawAdd(sharesMinted);
-        banker.lastActionTime = uint64(block.timestamp);
+        _mint(_receiver, sharesMinted);
 
         emit Deposit(
             msg.sender,
@@ -202,47 +209,62 @@ contract TokenVaultV2 is
         );
     }
 
-    function withdrawAll(
-        address _receiver
-    ) external nonReentrant returns (uint256 assetsWithdrawn) {
-        require(factory.withdrawEnable(), "PVP: Withdraw not enabled");
-        uint256 sharesToWithdraw = bankers[msg.sender].shares;
-        require(sharesToWithdraw > 0, "PVP: No shares to withdraw");
-        assetsWithdrawn = _withdraw(msg.sender, _receiver, sharesToWithdraw);
-    }
-
-    function withdraw(
-        address _receiver,
-        uint256 _shares
-    ) external nonReentrant returns (uint256 assetsWithdrawn) {
-        require(factory.withdrawEnable(), "PVP: Withdraw not enabled");
-        require(_shares > 0, "PVP: Shares must be positive");
-        assetsWithdrawn = _withdraw(msg.sender, _receiver, _shares);
-    }
-
-    function _withdraw(
-        address _owner,
-        address _receiver,
-        uint256 _shares
-    ) internal returns (uint256 assetsToWithdraw) {
-        Banker storage banker = bankers[_owner];
-        require(banker.shares >= _shares, "PVP: Insufficient shares");
-
-        uint256 currentTotalAssets = currentAssets();
-        assetsToWithdraw = _shares.rawMul(currentTotalAssets).rawDiv(
-            totalShares
+    function requestWithdrawal(uint256 _lpAmount) external nonReentrant {
+        require(_lpAmount > 0, "PVP: Amount must be positive");
+        require(
+            balanceOf(msg.sender) >= _lpAmount,
+            "PVP: Insufficient LP token balance"
         );
 
+        uint256 requestId = withdrawalIndex;
+        unchecked {
+            ++withdrawalIndex;
+        }
+
+        // lock lp token
+        IERC20(address(this)).safeTransferFrom(
+            msg.sender,
+            address(this),
+            _lpAmount
+        );
+
+        withdrawalRequests[requestId] = WithdrawalRequest({
+            user: msg.sender,
+            lpAmount: _lpAmount,
+            requestTime: block.timestamp
+        });
+
+        userPendingRequestIds[msg.sender].push(requestId);
+
+        emit WithdrawalRequested(
+            msg.sender,
+            requestId,
+            _lpAmount,
+            block.timestamp
+        );
+    }
+
+    function completeWithdrawal(uint256 _requestId) external nonReentrant {
+        WithdrawalRequest storage request = withdrawalRequests[_requestId];
+        require(
+            request.user == msg.sender,
+            "PVP: Request not found or not owner"
+        );
+
+        uint256 currentTotalAssets = currentAssets();
+        uint256 assetsToWithdraw = request
+            .lpAmount
+            .rawMul(currentTotalAssets)
+            .rawDiv(totalSupply());
+
         uint256 feeRate = factory.getFeeRate();
+        uint256 fee = 0;
         if (feeRate != 0) {
             uint64 lockPeriod = factory.getLockPeriod();
-            uint256 endTime = uint256(banker.lastActionTime).rawAdd(lockPeriod); // 显式转换
+            uint256 endTime = request.requestTime.rawAdd(lockPeriod);
             if (endTime > block.timestamp) {
-                uint256 fee = assetsToWithdraw.rawMul(feeRate).rawDiv(
-                    DENOMINATOR
-                );
+                fee = assetsToWithdraw.rawMul(feeRate).rawDiv(DENOMINATOR);
                 assetsToWithdraw = assetsToWithdraw.rawSub(fee);
-                IERC20(token).safeTransfer(factory.getOwner(), fee);
             }
         }
         require(
@@ -250,18 +272,40 @@ contract TokenVaultV2 is
             "PVP: Calculated withdraw amount is zero"
         );
 
-        banker.shares = banker.shares.rawSub(_shares);
-        totalShares = totalShares.rawSub(_shares);
+        // delete withdraw request
+        delete withdrawalRequests[_requestId];
+        // remove request id from userPendingRequestIds
+        _removeRequestIdForUser(request.user, _requestId);
+        // burn lp token
+        _burn(address(this), request.lpAmount);
 
-        IERC20(token).safeTransfer(_receiver, assetsToWithdraw);
+        if (fee > 0) {
+            IERC20(token).safeTransfer(factory.getOwner(), fee);
+        }
+        IERC20(token).safeTransfer(request.user, assetsToWithdraw);
 
-        emit Withdraw(
-            _owner,
-            _receiver,
+        emit WithdrawalFinalized(
+            request.user,
+            _requestId,
             assetsToWithdraw,
-            _shares,
-            block.timestamp
+            fee
         );
+    }
+
+    function _removeRequestIdForUser(
+        address _user,
+        uint256 _requestId
+    ) private {
+        uint256[] storage requestIds = userPendingRequestIds[_user];
+        uint256 lastIndex = requestIds.length - 1;
+
+        for (uint256 i = 0; i < requestIds.length; i++) {
+            if (requestIds[i] == _requestId) {
+                requestIds[i] = requestIds[lastIndex];
+                requestIds.pop();
+                return;
+            }
+        }
     }
 
     function currentAssets() public view returns (uint256) {
