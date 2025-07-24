@@ -121,6 +121,13 @@ contract TokenVaultV2 is
         );
     }
 
+    /**
+     * @notice Claims a specific amount of tokens by providing a valid signature from the authorizer.
+     * @dev The signature must be valid for the given nonce, amount, receiver, and deadline.
+     * This allows for off-chain reward calculation and authorization. The authorizer is fetched from the factory.
+     * @param data A struct containing the signature, nonce, amount, and other required data.
+     * @param receiver The address that will receive the claimed tokens.
+     */
     function claimReward(
         VerifySignData memory data,
         address receiver
@@ -149,6 +156,12 @@ contract TokenVaultV2 is
         emit Claimed(data.nonce, receiver, token, data.amount);
     }
 
+    /**
+     * @notice Claims multiple rewards in a single transaction to save gas.
+     * @dev Iterates through an array of `VerifySignData` and processes each claim for the same receiver.
+     * @param list An array of `VerifySignData` structs for each reward to be claimed.
+     * @param reciver The address that will receive all the claimed tokens.
+     */
     function batchClaimReward(
         VerifySignData[] memory list,
         address reciver
@@ -158,6 +171,13 @@ contract TokenVaultV2 is
         }
     }
 
+    /**
+     * @notice Allows the factory owner to transfer a specific amount of the underlying token out of the vault.
+     * @dev This is an administrative function for managing funds that are not backing LP tokens (e.g., fees, surplus).
+     * Only callable by the factory owner.
+     * @param _receiver The address to receive the funds.
+     * @param amount The amount of the underlying token to transfer.
+     */
     function transferFunds(
         address _receiver,
         uint256 amount
@@ -173,6 +193,14 @@ contract TokenVaultV2 is
         emit TransferFunds(_receiver, token, amount);
     }
 
+    /**
+     * @notice Deposits underlying assets into the vault and mints LP tokens to the receiver.
+     * @dev The amount of LP tokens minted is proportional to the amount of assets deposited
+     * relative to the total assets in the vault and the total supply of the LP token.
+     * @param _receiver The address to receive the minted LP tokens.
+     * @param _assets The amount of the underlying token to deposit.
+     * @return sharesMinted The amount of LP tokens minted for this deposit.
+     */
     function deposit(
         address _receiver,
         uint256 _assets
@@ -209,6 +237,13 @@ contract TokenVaultV2 is
         );
     }
 
+    /**
+     * @notice Initiates the two-phase withdrawal process (Step 1 of 2).
+     * @dev Creates a withdrawal request and locks the user's LP tokens within the contract.
+     * The user must approve the contract to spend their LP tokens before calling this.
+     * A unique `requestId` is generated for tracking.
+     * @param _lpAmount The amount of LP tokens the user wishes to withdraw.
+     */
     function requestWithdrawal(uint256 _lpAmount) external nonReentrant {
         require(_lpAmount > 0, "PVP: Amount must be positive");
         require(
@@ -244,6 +279,13 @@ contract TokenVaultV2 is
         );
     }
 
+    /**
+     * @notice Completes a pending withdrawal request (Step 2 of 2).
+     * @dev Calculates the amount of underlying assets to be returned based on the current asset-to-LP-token ratio.
+     * It burns the user's locked LP tokens and transfers the assets.
+     * An early withdrawal fee may be applied if called before the lock period (configured in the factory) expires.
+     * @param _requestId The unique ID of the withdrawal request to be completed.
+     */
     function completeWithdrawal(uint256 _requestId) external nonReentrant {
         WithdrawalRequest storage request = withdrawalRequests[_requestId];
         require(
@@ -308,6 +350,10 @@ contract TokenVaultV2 is
         }
     }
 
+    /**
+     * @notice Returns the total amount of the underlying token currently held by this vault.
+     * @return The total balance of the underlying token.
+     */
     function currentAssets() public view returns (uint256) {
         return IERC20(token).balanceOf(address(this));
     }
