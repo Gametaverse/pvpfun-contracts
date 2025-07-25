@@ -34,7 +34,7 @@ contract TokenVaultV2 is
 
     address public token;
 
-    uint256 public withdrawalIndex = 1;
+    uint256 public withdrawalIndex;
     mapping(uint256 => WithdrawalRequest) public withdrawalRequests;
     mapping(address => uint256[]) public userPendingRequestIds;
 
@@ -88,6 +88,8 @@ contract TokenVaultV2 is
 
         require(_tokenAddr != address(0), "PVP: Invalid token");
         token = _tokenAddr;
+
+        withdrawalIndex = 1;
     }
 
     function _authorizeUpgrade(
@@ -288,10 +290,8 @@ contract TokenVaultV2 is
      */
     function completeWithdrawal(uint256 _requestId) external nonReentrant {
         WithdrawalRequest storage request = withdrawalRequests[_requestId];
-        require(
-            request.user == msg.sender,
-            "PVP: Request not found or not owner"
-        );
+        address user = request.user;
+        require(user == msg.sender, "PVP: Request not found or not owner");
 
         uint256 currentTotalAssets = currentAssets();
         uint256 assetsToWithdraw = request
@@ -314,24 +314,19 @@ contract TokenVaultV2 is
             "PVP: Calculated withdraw amount is zero"
         );
 
-        // delete withdraw request
-        delete withdrawalRequests[_requestId];
-        // remove request id from userPendingRequestIds
-        _removeRequestIdForUser(request.user, _requestId);
         // burn lp token
         _burn(address(this), request.lpAmount);
+        // remove request id from userPendingRequestIds
+        _removeRequestIdForUser(user, _requestId);
+        // delete withdraw request
+        delete withdrawalRequests[_requestId];
 
         if (fee > 0) {
             IERC20(token).safeTransfer(factory.getOwner(), fee);
         }
-        IERC20(token).safeTransfer(request.user, assetsToWithdraw);
+        IERC20(token).safeTransfer(user, assetsToWithdraw);
 
-        emit WithdrawalFinalized(
-            request.user,
-            _requestId,
-            assetsToWithdraw,
-            fee
-        );
+        emit WithdrawalFinalized(user, _requestId, assetsToWithdraw, fee);
     }
 
     function _removeRequestIdForUser(
@@ -356,6 +351,12 @@ contract TokenVaultV2 is
      */
     function currentAssets() public view returns (uint256) {
         return IERC20(token).balanceOf(address(this));
+    }
+
+    function getPendingWithdrawalIds(
+        address _user
+    ) external view returns (uint256[] memory) {
+        return userPendingRequestIds[_user];
     }
 
     uint256[40] private __gap;
