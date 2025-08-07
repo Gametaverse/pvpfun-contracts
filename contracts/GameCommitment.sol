@@ -10,7 +10,7 @@ import {VerifySignData as TokenVaultVerifySignData, ITokenVaultInitializer} from
 // Uncomment this line to use console.log
 // import "hardhat/console.sol";
 
-contract Launches is Ownable {
+contract GameCommitment is Ownable {
     using SafeERC20 for IERC20;
 
     uint256 public feeRate;
