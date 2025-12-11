@@ -74,6 +74,7 @@ async function main() {
         key,
         BigInt(wei.toFixed())
       );
+      console.log(leaves);
       total = total.add(new Decimal(value));
       return [key, {
         amount: BigInt(wei.toFixed()),
