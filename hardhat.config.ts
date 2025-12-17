@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { HardhatUserConfig } from "hardhat/config";
 import "@nomicfoundation/hardhat-toolbox";
+import "@openzeppelin/hardhat-upgrades";
 
 // --- 获取环境变量中的私钥 ---
 const deployerPrivateKey = process.env.PRIVATE_KEY_DEPLOYER;

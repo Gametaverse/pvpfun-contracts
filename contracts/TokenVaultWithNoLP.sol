@@ -22,13 +22,10 @@ contract TokenVaultWithNoLP is
     OwnableUpgradeable
 {
     using SafeERC20 for IERC20;
-    using SafeTransferLib for address;
     using FixedPointMathLib for uint256;
 
     mapping(uint256 => bool) public usedNonces;
     address public authorizer;
-
-    uint256 public constant DENOMINATOR = 10000;
 
     event Claimed(
         uint64 indexed nonce,
@@ -40,6 +37,11 @@ contract TokenVaultWithNoLP is
     event AuthorizerChanged(address indexed authorizer);
 
     event Upgraded(address indexed implementation);
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
 
     function initialize() public initializer {
         __ReentrancyGuard_init();
