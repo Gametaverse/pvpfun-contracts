@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 /**
  * @title VerifySignLib
@@ -20,9 +21,10 @@ library VerifySignLib {
         bytes memory signature
     ) internal pure returns (address) {
         // add the "\x19Ethereum Signed Message:\n32" prefix
-        bytes32 prefixedHash = keccak256(
-            abi.encodePacked("\x19Ethereum Signed Message:\n32", msgHash)
-        );
+        // bytes32 prefixedHash = keccak256(
+        //     abi.encodePacked("\x19Ethereum Signed Message:\n32", msgHash)
+        // );
+        bytes32 prefixedHash = MessageHashUtils.toEthSignedMessageHash(msgHash);
 
         // Use OZ's recover function which prevents signature malleability
         // It will revert with specific errors (e.g., ECDSAInvalidSignature) on failure
