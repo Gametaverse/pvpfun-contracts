@@ -28,7 +28,7 @@ contract PVPToken is ERC20, Ownable {
      * @dev Mints the max supply of tokens to the deployer.
      * The deployer of the contract will be the initial owner.
      */
-    constructor() ERC20("PVPFUN", "PVP") Ownable(msg.sender) {
+    constructor() ERC20("Pvpfun", "PVP") Ownable(msg.sender) {
         _mint(msg.sender, MAX_SUPPLY);
     }
 
