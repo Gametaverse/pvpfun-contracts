@@ -44,10 +44,15 @@ const config: HardhatUserConfig = {
       accounts: [deployerPrivateKey, authorizerPrivateKey], // 使用你的钱包私钥
       gasPrice: "auto",
     },
-    bscMainnet: {
+    bsc: {
       url: "https://bsc-mainnet.infura.io/v3/a50633c728514162aecbd9f1235300f7", // 使用环境变量中的 RPC URL
       chainId: 56, // BSC 测试网的 Chain ID
-      accounts: [mainnetDeployerPrivateKey, mainnetAuthorizerPrivateKey], // 使用你的钱包私钥
+      accounts: [
+        mainnetDeployerPrivateKey,
+        mainnetAuthorizerPrivateKey,
+        process.env.Mainnet_Token_Owner!,
+        process.env.mainnet_airdrop_deployer!
+      ], // 使用你的钱包私钥
       gasPrice: "auto",
     },
     // 如果需要，可以添加其他网络配置，例如 Rinkeby, Mainnet 等
@@ -68,6 +73,9 @@ const config: HardhatUserConfig = {
   },
   mocha: {
     timeout: 40000, // 增加测试超时时间（如果需要）
+  },
+  etherscan: {
+    apiKey: process.env.etherscan_apikey!,
   },
 };
 

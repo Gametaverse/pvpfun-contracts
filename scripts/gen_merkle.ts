@@ -56,7 +56,7 @@ export function leavesData(
 async function main() {
   const phase = 1;
   const network = "bsc_testnet";
-  const csvFile = "../data_airdrop_list.csv"
+  const csvFile = "../PVPFUN airdrop list-20251222.csv"
 
   const userData = readAirdropCsv(csvFile);
 
@@ -74,7 +74,7 @@ async function main() {
         key,
         BigInt(wei.toFixed())
       );
-      console.log(leaves);
+      // console.log(leaves);
       total = total.add(new Decimal(value));
       return [key, {
         amount: BigInt(wei.toFixed()),
@@ -104,7 +104,7 @@ async function main() {
   const userProofs = Object.fromEntries(Object.entries(userAmountsBN).map(([address, data]) => {
     const proof = tree
       .getHexProof(data.leaves);
-      // .map((x) => x.data.toString("hex"));
+    // .map((x) => x.data.toString("hex"));
 
     return [address, {
       amount: data.amount.toString(),

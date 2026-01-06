@@ -19,3 +19,5 @@ ignition/deployments/chain-31337
 data_airdrop_list.csv
 data_merkle_proofs_bsc_*.json
 .prettierrc.json
+
+*.csv
