@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
+import {ERC20Burnable} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 
 /**
  * @title PVPToken
@@ -11,7 +12,7 @@ import "@openzeppelin/contracts/access/AccessControl.sol";
  * The owner can add or remove addresses from the blacklist.
  * Blacklisted addresses are restricted from transferring tokens.
  */
-contract PVPToken4Spoke is ERC20, Ownable, AccessControl {
+contract PVPToken4Spoke is ERC20, Ownable, AccessControl, ERC20Burnable {
     uint256 public constant MAX_SUPPLY = 100_000_000 * 1e18;
 
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
@@ -71,14 +72,6 @@ contract PVPToken4Spoke is ERC20, Ownable, AccessControl {
             revert MaxSupplyExceeded(totalSupply() + amount, MAX_SUPPLY);
         }
         _mint(to, amount);
-    }
-
-    /**
-     * @dev Burn tokens on spoke chain.
-     * Callable only by authorized bridge (NTT Spoke).
-     */
-    function burn(address from, uint256 amount) external onlyRole(MINTER_ROLE) {
-        _burn(from, amount);
     }
 
     /**

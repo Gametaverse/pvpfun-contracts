@@ -55,6 +55,13 @@ const config: HardhatUserConfig = {
       ], // 使用你的钱包私钥
       gasPrice: "auto",
     },
+    seiTestnet: {
+      url: "https://evm-rpc-testnet.sei-apis.com",
+      chainId: 1328,
+      accounts: [
+        process.env.CLAIMER_PRIVATE_KEY!
+      ],
+    },
     // 如果需要，可以添加其他网络配置，例如 Rinkeby, Mainnet 等
     // localhost: {
     //   url: "http://127.0.0.1:8545",
